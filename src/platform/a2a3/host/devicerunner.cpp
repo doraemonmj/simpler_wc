@@ -11,6 +11,7 @@
 #include <iostream>
 #include <vector>
 
+#include "hostregs.h"
 #include "runtime.h"
 
 // =============================================================================
@@ -121,6 +122,57 @@ int AicpuSoInfo::Finalize() {
         return rc;
     }
     return 0;
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Initialize device register addresses for AICore
+ *
+ * This function:
+ * 1. Calls GetAicoreRegs to get register addresses from HAL
+ * 2. Allocates device memory for the register address array
+ * 3. Copies register addresses to device memory
+ * 4. Returns the device memory pointer (for runtime.regs)
+ *
+ * @param devId     Device ID
+ * @param allocator Memory allocator for device memory
+ * @return Device memory address on success, 0 on failure
+ */
+static uint64_t InitDeviceRegsAddr(int devId, MemoryAllocator& allocator) {
+    std::vector<int64_t> host_regs;
+    GetAicoreRegs(host_regs, static_cast<uint64_t>(devId));
+
+    if (host_regs.empty()) {
+        std::cerr << "Error: GetAicoreRegs returned empty vector\n";
+        return 0;
+    }
+
+    size_t size = host_regs.size() * sizeof(int64_t);
+
+    // 1. Allocate Device memory using MemoryAllocator
+    void* reg_ptr = allocator.Alloc(size);
+    if (reg_ptr == nullptr) {
+        std::cerr << "Error: Alloc for registers failed\n";
+        return 0;
+    }
+
+    // 2. Copy Host register addresses to device
+    int rc = rtMemcpy(reg_ptr, size, host_regs.data(), size, RT_MEMCPY_HOST_TO_DEVICE);
+    if (rc != 0) {
+        std::cerr << "Error: rtMemcpy for registers failed: " << rc << '\n';
+        allocator.Free(reg_ptr);
+        return 0;
+    }
+
+    // 3. Return device memory address
+    uint64_t dev_addr = reinterpret_cast<uint64_t>(reg_ptr);
+
+    std::cout << "InitDeviceRegsAddr: Copied " << host_regs.size() << " register addresses to device at 0x" << std::hex
+              << dev_addr << std::dec << '\n';
+    return dev_addr;
 }
 
 // =============================================================================
@@ -284,8 +336,15 @@ int DeviceRunner::Run(Runtime& runtime,
         runtime.workers[i].core_type = (i < numAic) ? 0 : 1;
     }
 
-    // Set functionBinAddr for all tasks (NEW - Runtime function pointer
-    // dispatch)
+    // Initialize device register addresses
+    std::cout << "\n=== Initializing Device Register Addresses ===" << '\n';
+    runtime.regs = InitDeviceRegsAddr(deviceId, memAlloc_);
+    if (runtime.regs == 0) {
+        std::cerr << "Error: InitDeviceRegsAddr failed\n";
+        return -1;
+    }
+
+    // Set functionBinAddr for all tasks (NEW - Runtime function pointer dispatch)
     std::cout << "\n=== Setting functionBinAddr for Tasks ===" << '\n';
     for (int i = 0; i < runtime.get_task_count(); i++) {
         Task* task = runtime.get_task(i);

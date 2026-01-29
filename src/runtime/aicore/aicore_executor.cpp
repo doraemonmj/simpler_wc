@@ -1,6 +1,9 @@
+#include <cstdint>
+
 #include "aicore.h"
 #include "runtime.h"
 
+constexpr uint32_t AICORE_COREID_MASK = 0x0FFF;
 /**
  * Unified function pointer type for kernel dispatch
  *
@@ -49,29 +52,35 @@ __aicore__ __attribute__((always_inline)) static void execute_task(__gm__ Task* 
 __aicore__ __attribute__((weak)) void AicoreExecute(__gm__ Runtime* runtime, int blockIdx, int coreType) {
     __gm__ Handshake* my_hank = (__gm__ Handshake*)(&runtime->workers[blockIdx]);
 
+    uint32_t physicalCoreId = static_cast<uint32_t>(get_coreid()) & AICORE_COREID_MASK;
+    my_hank->aicore_done = physicalCoreId + 1;
     // Phase 1: Wait for AICPU initialization signal
     while (my_hank->aicpu_ready == 0) {
         dcci(my_hank, ENTIRE_DATA_CACHE, CACHELINE_OUT);
     }
 
-    // Phase 2: Signal AICore is ready (use core_id + 1 to avoid 0)
-    my_hank->aicore_done = blockIdx + 1;
-
+    volatile uint32_t task_id = 0, lastTaskId = 0;
     // Phase 3: Main execution loop - poll for tasks until quit signal
+
     while (true) {
         dcci(my_hank, ENTIRE_DATA_CACHE, CACHELINE_OUT);
 
-        // Check for quit command from AICPU
-        if (my_hank->control == 1) {
+        // Read task_id from register
+        __asm__ volatile("MOV %0, DATA_MAIN_BASE\n" : "+l"(task_id));
+
+        // Check for quit signal (AICORE_TASK_STOP = 0x7FFFFFF0)
+        if (task_id == AICORE_TASK_STOP) {
             break;  // Exit kernel
         }
 
         // Execute task if assigned (task != 0 means valid Task* pointer)
-        if (my_hank->task != 0) {
-            __gm__ Task* task_ptr = reinterpret_cast<__gm__ Task*>(my_hank->task);
+        if (task_id != 0 && task_id != lastTaskId) {
+            set_cond(1);
+            __gm__ Task* task_ptr = &(runtime->tasks[task_id - 1]);
             execute_task(task_ptr);
             // Mark task as complete (task_status: 0=idle, 1=busy)
-            my_hank->task_status = 0;
+            lastTaskId = task_id;
+            set_cond(0);
         }
     }
 }

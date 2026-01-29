@@ -33,6 +33,9 @@
 #define RUNTIME_MAX_TASKS 1024
 #endif
 
+// Control signal for AICore termination (special task_id value)
+constexpr uint32_t AICORE_TASK_STOP = 0x7FFFFFF0;
+
 #ifndef RUNTIME_MAX_ARGS
 #define RUNTIME_MAX_ARGS 16
 #endif
@@ -156,10 +159,12 @@ public:
     // Execution parameters for AICPU scheduling
     int block_dim;   // Number of AIC blocks (block dimension)
     int scheCpuNum;  // Number of AICPU threads for scheduling
+    uint64_t regs{0};
+  
+    Task tasks[RUNTIME_MAX_TASKS]; // Fixed-size task array
 
 private:
     // Task storage
-    Task tasks[RUNTIME_MAX_TASKS];  // Fixed-size task array
     int next_task_id;               // Next available task ID
 
     // Initial ready tasks (computed once, read-only after)
