@@ -80,10 +80,6 @@ void GetAicoreRegs(std::vector<int64_t> &regs, uint64_t deviceId) {
     int rt = GetAicoreRegInfo(aic, aiv, ADDR_MAP_TYPE_REG_AIC_CTRL, deviceId);  //
     // 通过 IOMMU/SMMU 映射后的用户态虚拟地址
 
-    if (rt != 0) {
-        std::cout << " get aicore regs fail" << std::endl;
-        return;
-    }
     regs.insert(regs.end(), aic.begin(), aic.end());
     regs.insert(regs.end(), aiv.begin(), aiv.end());
     return;

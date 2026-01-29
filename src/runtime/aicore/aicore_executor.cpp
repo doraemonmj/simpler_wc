@@ -65,22 +65,36 @@ __aicore__ __attribute__((weak)) void AicoreExecute(__gm__ Runtime* runtime, int
     while (true) {
         dcci(my_hank, ENTIRE_DATA_CACHE, CACHELINE_OUT);
 
+#ifdef ENABLE_REGISTER_FEATURE
         // Read task_id from register
         __asm__ volatile("MOV %0, DATA_MAIN_BASE\n" : "+l"(task_id));
-
         // Check for quit signal (AICORE_TASK_STOP = 0x7FFFFFF0)
         if (task_id == AICORE_TASK_STOP) {
             break;  // Exit kernel
         }
 
-        // Execute task if assigned (task != 0 means valid Task* pointer)
         if (task_id != 0 && task_id != lastTaskId) {
-            set_cond(1);
+            set_cond(1);      
             __gm__ Task* task_ptr = &(runtime->tasks[task_id - 1]);
             execute_task(task_ptr);
             // Mark task as complete (task_status: 0=idle, 1=busy)
             lastTaskId = task_id;
             set_cond(0);
         }
+#else
+
+        // Check for quit command from AICPU
+        if (my_hank->control == 1) {
+            break;  // Exit kernel
+        }
+
+        // Execute task if assigned (task != 0 means valid Task* pointer)
+        if (my_hank->task != 0) {
+            __gm__ Task* task_ptr = reinterpret_cast<__gm__ Task*>(my_hank->task);
+            execute_task(task_ptr);
+            // Mark task as complete (task_status: 0=idle, 1=busy)
+            my_hank->task_status = 0;
+        }
+#endif
     }
 }

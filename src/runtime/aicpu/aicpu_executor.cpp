@@ -228,51 +228,50 @@ int AicpuExecutor::resolve_and_dispatch(Runtime& runtime,
     int cur_thread_tasks_in_flight = 0;
     int task_count = total_tasks_.load(std::memory_order_acquire);
 
+#ifdef ENABLE_REGISTER_FEATURE
     uint64_t* regs = reinterpret_cast<uint64_t*>(runtime.regs);
-
-    // Track current task for each logical core in this thread
     Task* core_current_task[MAX_CORES_PER_THREAD] = {nullptr};
+#endif
 
-    // Execute tasks using register-based dispatch
     while (completed_tasks_.load(std::memory_order_acquire) < task_count) {
-        // Check each core managed by this thread
+        // Phase 1: Process completed tasks
         for (int i = 0; i < core_num; i++) {
             int core_id = cur_thread_cores[i];
             Handshake* h = &hank[core_id];
 
-            // Get physical core ID and register base address
+#ifdef ENABLE_REGISTER_FEATURE
+            // Register-based: read status from register
             uint32_t physical_id = physical_core_ids[i];
             uint64_t reg_base = regs[physical_id];
-
             if (reg_base == 0) {
                 DEV_ERROR("Thread %d: Invalid register base for logical core %d", thread_idx, core_id);
                 continue;
             }
-
-            // Read status register (REG_SPR_COND, written by AICore, read by AICPU)
             volatile uint32_t* status_reg = reinterpret_cast<volatile uint32_t*>(reg_base + REG_SPR_COND);
-            volatile uint32_t status = *status_reg;  // 0=idle, non-zero=busy
+            volatile uint32_t status = *status_reg;
+            bool task_completed = (status == 0 && core_current_task[i] != nullptr);
+#else
+            // Shared memory-based: read status from handshake
+            bool task_completed = (h->task_status == 0 && h->task != 0);
+#endif
 
-            // Case 1: Core completed a task (status=0 and has task in flight)
-            if (status == 0 && core_current_task[i] != nullptr) {
+            if (task_completed) {
+#ifdef ENABLE_REGISTER_FEATURE
                 Task* task = core_current_task[i];
                 int task_id = task->task_id;
+                DEV_INFO("Thread %d: Core %d (physical %u) completed task %d", thread_idx, core_id, physical_id, task_id);
+#else
+                Task* task = reinterpret_cast<Task*>(h->task);
+                int task_id = task->task_id;
+                DEV_INFO("Thread %d: Core %d completed task %d", thread_idx, core_id, task_id);
+#endif
 
-                DEV_INFO(
-                    "Thread %d: Core %d (physical %u) completed task %d", thread_idx, core_id, physical_id, task_id);
-
-                // Clear the task ID from register to prevent re-execution
-                WriteToAicore(regs, physical_id, 0);
-
-                // Update fanin of successors atomically and add to appropriate shared ready queue
+                // Update fanin of successors and add to ready queue
                 for (int j = 0; j < task->fanout_count; j++) {
                     int dep_id = task->fanout[j];
                     Task* dep = runtime.get_task(dep_id);
-
-                    // Atomic decrement fanin
                     int prev_fanin = dep->fanin.fetch_sub(1, std::memory_order_acq_rel);
 
-                    // Dependency resolved, add to appropriate shared ready queue
                     if (prev_fanin == 1) {
                         if (dep->core_type == 0) {  // AIC task
                             std::lock_guard<std::mutex> lock(ready_queue_aic_mutex_);
@@ -290,15 +289,44 @@ int AicpuExecutor::resolve_and_dispatch(Runtime& runtime,
                     }
                 }
 
-                // Clear task tracking
+#ifdef ENABLE_REGISTER_FEATURE
+                WriteToAicore(regs, physical_id, 0);
                 core_current_task[i] = nullptr;
+#else
+                h->task = 0;
+#endif
                 cur_thread_tasks_in_flight--;
                 completed_tasks_.fetch_add(1, std::memory_order_release);
                 cur_thread_completed++;
             }
+        }
 
-            // Case 2: Core is idle and ready for new task (status=0 and no task in flight)
-            if (status == 0 && core_current_task[i] == nullptr) {
+#ifndef ENABLE_REGISTER_FEATURE
+        // Load balancing: Skip dispatch if all cores are busy (shared memory only)
+        if (cur_thread_tasks_in_flight >= core_num) {
+            continue;
+        }
+#endif
+
+        // Phase 2: Dispatch new tasks to idle cores
+        for (int i = 0; i < core_num; i++) {
+            int core_id = cur_thread_cores[i];
+            Handshake* h = &hank[core_id];
+
+#ifdef ENABLE_REGISTER_FEATURE
+            uint32_t physical_id = physical_core_ids[i];
+            uint64_t reg_base = regs[physical_id];
+            if (reg_base == 0) {
+                continue;
+            }
+            volatile uint32_t* status_reg = reinterpret_cast<volatile uint32_t*>(reg_base + REG_SPR_COND);
+            volatile uint32_t status = *status_reg;
+            bool core_idle = (status == 0 && core_current_task[i] == nullptr);
+#else
+            bool core_idle = (h->task_status == 0 && h->task == 0);
+#endif
+
+            if (core_idle) {
                 // Dispatch from matching queue based on core type
                 if (h->core_type == 0) {  // AIC core
                     if (ready_count_aic_.load(std::memory_order_acquire) > 0) {
@@ -309,16 +337,16 @@ int AicpuExecutor::resolve_and_dispatch(Runtime& runtime,
                             int task_id = ready_queue_aic_[count - 1];
                             Task* task = runtime.get_task(task_id);
 
+#ifdef ENABLE_REGISTER_FEATURE
                             DEV_INFO("Thread %d: Dispatching AIC task %d to core %d (physical %u)",
-                                thread_idx,
-                                task_id,
-                                core_id,
-                                physical_id);
-
-                            // Dispatch task via register write (both AIC and AIV use register)
+                                thread_idx, task_id, core_id, physical_id);
                             WriteToAicore(regs, physical_id, static_cast<uint32_t>(task_id + 1));
-
                             core_current_task[i] = task;
+#else
+                            DEV_INFO("Thread %d: Dispatching AIC task %d to core %d", thread_idx, task_id, core_id);
+                            h->task = reinterpret_cast<uint64_t>(task);
+                            h->task_status = 1;
+#endif
                             cur_thread_tasks_in_flight++;
                         }
                     }
@@ -331,16 +359,16 @@ int AicpuExecutor::resolve_and_dispatch(Runtime& runtime,
                             int task_id = ready_queue_aiv_[count - 1];
                             Task* task = runtime.get_task(task_id);
 
+#ifdef ENABLE_REGISTER_FEATURE
                             DEV_INFO("Thread %d: Dispatching AIV task %d to core %d (physical %u)",
-                                thread_idx,
-                                task_id,
-                                core_id,
-                                physical_id);
-
-                            // Dispatch task via register write
+                                thread_idx, task_id, core_id, physical_id);
                             WriteToAicore(regs, physical_id, static_cast<uint32_t>(task_id + 1));
-
                             core_current_task[i] = task;
+#else
+                            DEV_INFO("Thread %d: Dispatching AIV task %d to core %d", thread_idx, task_id, core_id);
+                            h->task = reinterpret_cast<uint64_t>(task);
+                            h->task_status = 1;
+#endif
                             cur_thread_tasks_in_flight++;
                         }
                     }
