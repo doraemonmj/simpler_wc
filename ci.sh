@@ -1,5 +1,5 @@
 #!/bin/bash
-
+###3
 # Parse arguments
 PLATFORM=""
 DEVICE_RANGE=""
