@@ -34,6 +34,7 @@ Examples:
 """
 
 import argparse
+import fcntl
 import logging
 import os
 import sys
@@ -81,7 +82,8 @@ def _wait_for_new_device_log(log_dir, pre_run_logs, timeout=15, interval=0.5):
     return None
 
 
-def main():  # noqa: PLR0912
+def _parse_args():
+    """Parse CLI arguments and configure logging. Returns (args, log_level_str)."""
     parser = argparse.ArgumentParser(
         description="Run PTO runtime test with kernel config and golden script",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -201,13 +203,22 @@ Golden.py interface:
         help="Compile runtime from source instead of using pre-built binaries",
     )
 
+    parser.add_argument(
+        "--no-device-lock",
+        action="store_true",
+        help="Disable per-device file lock (enabled by default for hardware platforms)",
+    )
+
+    parser.add_argument(
+        "--lock-timeout", type=float, default=300, help="Timeout in seconds to wait for device lock (default: 300)"
+    )
+
     args = parser.parse_args()
 
     if args.all and args.case:
         parser.error("--all and --case are mutually exclusive")
 
     # Determine log level from arguments
-    log_level_str = None
     if args.log_level:
         log_level_str = args.log_level
     elif args.verbose:
@@ -231,6 +242,54 @@ Golden.py interface:
 
     # Set environment variable for C++ side
     os.environ["PTO_LOG_LEVEL"] = log_level_str
+
+    return args, log_level_str
+
+
+def _generate_swimlane(kernels_path, device_log_dir, pre_run_device_logs, device_id, log_level_str):
+    """Run swimlane_converter.py to produce a merged swimlane JSON from profiling data."""
+    import subprocess  # noqa: PLC0415
+
+    kernel_config_path = kernels_path / "kernel_config.py"
+    swimlane_script = project_root / "tools" / "swimlane_converter.py"
+
+    if not swimlane_script.exists():
+        logger.warning(f"Swimlane converter script not found: {swimlane_script}")
+        return
+
+    try:
+        cmd = [
+            sys.executable,
+            str(swimlane_script),
+            "-k",
+            str(kernel_config_path),
+        ]
+
+        # Find the device log created by this run via snapshot diff
+        if device_log_dir is not None:
+            device_log_file = _wait_for_new_device_log(device_log_dir, pre_run_device_logs)
+            if device_log_file:
+                cmd += ["--device-log", str(device_log_file)]
+            else:
+                logger.warning("No new device log found, falling back to device-id")
+                cmd += ["-d", str(device_id)]
+        else:
+            cmd += ["-d", str(device_id)]
+
+        if log_level_str == "debug":
+            cmd.append("-v")
+
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        logger.info(result.stdout)
+        logger.info("Swimlane JSON generation completed")
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"Failed to generate swimlane JSON: {e}")
+        if log_level_str == "debug":
+            logger.debug(f"stderr: {e.stderr}")
+
+
+def main():  # noqa: PLR0912
+    args, log_level_str = _parse_args()
 
     # Validate paths
     kernels_path = Path(args.kernels)
@@ -268,62 +327,58 @@ Golden.py interface:
             skip_golden=args.skip_golden,
         )
 
-        # Snapshot existing device logs before the run so we can identify the
-        # new log created by this run (CANN writes device logs asynchronously).
-        pre_run_device_logs = set()
-        device_log_dir = None
-        if args.enable_profiling and args.platform == "a2a3":
-            device_log_dir = _get_device_log_dir(args.device)
-            if device_log_dir.exists():
-                pre_run_device_logs = set(device_log_dir.glob("*.log"))
-
-        runner.run()
-        logger.info("=" * 60)
-        logger.info("TEST PASSED")
-        logger.info("=" * 60)
-
-        # If profiling was enabled, generate merged swimlane JSON
-        if args.enable_profiling:
-            logger.info("Generating swimlane visualization...")
-            kernel_config_path = kernels_path / "kernel_config.py"
-            swimlane_script = project_root / "tools" / "swimlane_converter.py"
-
-            if swimlane_script.exists():
-                import subprocess  # noqa: PLC0415
-
+        # Acquire per-device file lock (hardware platforms only)
+        lock_fd = None
+        is_hardware = not args.platform.endswith("sim")
+        if is_hardware and not args.no_device_lock:
+            lock_path = f"/tmp/pto_npu_device_{args.device}.lock"
+            lock_fd = open(lock_path, "w")
+            logger.info(f"Acquiring lock for device {args.device}...")
+            start = time.monotonic()
+            while True:
                 try:
-                    cmd = [
-                        sys.executable,
-                        str(swimlane_script),
-                        "-k",
-                        str(kernel_config_path),
-                    ]
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    elapsed = time.monotonic() - start
+                    if args.lock_timeout > 0 and elapsed >= args.lock_timeout:
+                        lock_fd.close()
+                        raise TimeoutError(
+                            f"Device {args.device} is locked by another process "
+                            f"(waited {args.lock_timeout:.0f}s). "
+                            f"Lock file: {lock_path}"
+                        )
+                    time.sleep(1)
+            lock_fd.write(f"pid={os.getpid()}\n")
+            lock_fd.flush()
+            logger.info(f"Acquired lock for device {args.device}")
 
-                    # Find the device log created by this run via snapshot diff
-                    if device_log_dir is not None:
-                        device_log_file = _wait_for_new_device_log(device_log_dir, pre_run_device_logs)
-                        if device_log_file:
-                            cmd += ["--device-log", str(device_log_file)]
-                        else:
-                            logger.warning("No new device log found, falling back to device-id")
-                            cmd += ["-d", str(args.device)]
-                    else:
-                        cmd += ["-d", str(args.device)]
+        try:
+            # Snapshot existing device logs before the run so we can identify the
+            # new log created by this run (CANN writes device logs asynchronously).
+            pre_run_device_logs = set()
+            device_log_dir = None
+            if args.enable_profiling and args.platform == "a2a3":
+                device_log_dir = _get_device_log_dir(args.device)
+                if device_log_dir.exists():
+                    pre_run_device_logs = set(device_log_dir.glob("*.log"))
 
-                    if log_level_str == "debug":
-                        cmd.append("-v")
+            runner.run()
+            logger.info("=" * 60)
+            logger.info("TEST PASSED")
+            logger.info("=" * 60)
 
-                    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-                    logger.info(result.stdout)
-                    logger.info("Swimlane JSON generation completed")
-                except subprocess.CalledProcessError as e:
-                    logger.warning(f"Failed to generate swimlane JSON: {e}")
-                    if log_level_str == "debug":
-                        logger.debug(f"stderr: {e.stderr}")
-            else:
-                logger.warning(f"Swimlane converter script not found: {swimlane_script}")
+            # If profiling was enabled, generate merged swimlane JSON
+            if args.enable_profiling:
+                logger.info("Generating swimlane visualization...")
+                _generate_swimlane(kernels_path, device_log_dir, pre_run_device_logs, args.device, log_level_str)
 
-        return 0
+            return 0
+        finally:
+            if lock_fd:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                lock_fd.close()
+                logger.info(f"Released lock for device {args.device}")
 
     except ImportError as e:
         logger.error(f"Import error: {e}")
