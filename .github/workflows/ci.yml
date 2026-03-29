@@ -260,7 +260,7 @@ jobs:
         run: |
           source ${ASCEND_HOME_PATH}/bin/setenv.bash
           pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
-          pip install .
+          PTO_ARCH=a5 pip install .
 
       - name: Run on-device examples (a5)
         run: |
