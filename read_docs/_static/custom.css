@@ -1,0 +1,64 @@
+/* Custom styles for Ascend NPU Programming Guide */
+
+/* Code block styling */
+.highlight pre {
+    font-size: 0.85em;
+    line-height: 1.4;
+}
+
+/* ASCII art diagrams - preserve formatting */
+.highlight-text pre,
+.highlight-none pre {
+    font-family: 'Source Code Pro', 'Consolas', 'Monaco', monospace;
+    white-space: pre;
+}
+
+/* Table improvements */
+table.docutils {
+    border-collapse: collapse;
+    width: 100%;
+}
+
+table.docutils td, table.docutils th {
+    padding: 8px 12px;
+    border: 1px solid #e1e4e5;
+}
+
+/* Note and warning boxes */
+.admonition {
+    margin: 1em 0;
+    padding: 12px;
+}
+
+.admonition.note {
+    background-color: #e7f2fa;
+    border-left: 4px solid #6ab0de;
+}
+
+.admonition.warning {
+    background-color: #ffedcc;
+    border-left: 4px solid #f0b37e;
+}
+
+.admonition.tip {
+    background-color: #dbfaf4;
+    border-left: 4px solid #1abc9c;
+}
+
+/* Sidebar navigation */
+.wy-nav-content {
+    max-width: 900px;
+}
+
+/* Header styling */
+h1, h2, h3, h4 {
+    font-weight: 600;
+}
+
+/* Inline code */
+code.literal {
+    background-color: #f4f4f4;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
