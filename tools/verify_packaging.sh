@@ -63,12 +63,6 @@ print('simpler_setup:', simpler_setup.__file__)
     echo "::group::[${mode}] standalone test_*.py --help"
     python tests/st/a2a3/aicpu_build_graph/paged_attention/test_paged_attention.py --help >/dev/null
     echo "::endgroup::"
-    echo "::group::[${mode}] ci.py --help"
-    python ci.py --help >/dev/null
-    echo "::endgroup::"
-    echo "::group::[${mode}] run_example.py --help"
-    python examples/scripts/run_example.py --help >/dev/null
-    echo "::endgroup::"
     echo "smoke[${mode}] OK"
 }
 

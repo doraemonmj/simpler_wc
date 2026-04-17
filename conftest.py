@@ -146,13 +146,17 @@ def pytest_configure(config):
         os.environ["PTO_LOG_LEVEL"] = log_level
 
     commit = config.getoption("--pto-isa-commit")
-    if commit:
+    clone_protocol = config.getoption("--clone-protocol")
+    # Always pre-clone PTO-ISA so the clone_protocol is respected (CI needs
+    # https, but scene_test.py defaults to ssh).  Previously ci.py handled
+    # this; now conftest owns it.
+    if commit or clone_protocol != "ssh":
         from simpler_setup.pto_isa import ensure_pto_isa_root  # noqa: PLC0415
 
         root = ensure_pto_isa_root(
             verbose=True,
             commit=commit,
-            clone_protocol=config.getoption("--clone-protocol"),
+            clone_protocol=clone_protocol,
         )
         if root:
             os.environ["PTO_ISA_ROOT"] = root

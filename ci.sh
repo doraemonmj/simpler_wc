@@ -323,9 +323,16 @@ run_task() {
     local start_time=$SECONDS
 
     local -a cmd
-    cmd=(env PYTHONDONTWRITEBYTECODE=1 python examples/scripts/run_example.py
-        -k "${dir}/kernels" -g "${dir}/golden.py"
-        -p "$platform" --clone-protocol "$CLONE_PROTOCOL" "${commit_flag[@]}")
+    # Prefer test_*.py if available
+    local test_file
+    test_file=$(find "$dir" -maxdepth 1 -name 'test_*.py' -print -quit 2>/dev/null || true)
+    if [[ -n "$test_file" ]]; then
+        cmd=(env PYTHONDONTWRITEBYTECODE=1 python "$test_file"
+            -p "$platform" --clone-protocol "$CLONE_PROTOCOL" "${commit_flag[@]}")
+    else
+        echo "[${platform}] SKIP: no test_*.py found in $dir"
+        return 1
+    fi
     [[ -n "$device_id" ]] && cmd+=(-d "$device_id")
 
     # Progress to stdout (not captured in log)

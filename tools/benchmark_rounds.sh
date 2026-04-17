@@ -19,7 +19,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-RUN_EXAMPLE="$PROJECT_ROOT/examples/scripts/run_example.py"
 
 # ---------------------------------------------------------------------------
 # Examples to benchmark and their case lists, per runtime.
@@ -388,7 +387,7 @@ run_bench() {
     trap 'rm -f -- "$pre_log_file"' RETURN
     ls -1 "$DEVICE_LOG_DIR"/*.log 2>/dev/null | sort > "$pre_log_file" || true
 
-    # Build run command: prefer test_*.py, fall back to run_example.py
+    # Build run command using test_*.py
     local test_file
     test_file=$(find "$example_dir" -maxdepth 1 -name 'test_*.py' -print -quit 2>/dev/null || true)
 
@@ -400,14 +399,8 @@ run_bench() {
             -n "$ROUNDS" --skip-golden
         )
     else
-        local kernels_dir="$example_dir/kernels"
-        local golden="$example_dir/golden.py"
-        run_cmd=(
-            python3 "$RUN_EXAMPLE"
-            -k "$kernels_dir" -g "$golden"
-            -p "$PLATFORM" -d "$DEVICE_ID"
-            -n "$ROUNDS" --skip-golden
-        )
+        echo "  SKIPPED: no test_*.py found in $example_dir"
+        return
     fi
     if [[ -n "$case_name" ]]; then
         run_cmd+=(--case "$case_name")
