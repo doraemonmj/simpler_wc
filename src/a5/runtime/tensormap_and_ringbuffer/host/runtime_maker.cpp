@@ -231,6 +231,9 @@ extern "C" int init_runtime_impl(Runtime *runtime, const ChipCallable *callable,
         LOG_INFO("Orchestrator-to-scheduler transition: %s", runtime->orch_to_sched ? "enabled" : "disabled");
     }
 
+    // Sequential dispatch: orchestration runs to completion before any AICore dispatch.
+    runtime->sequential_dispatch = true;
+
     // Read ring buffer size overrides from environment
     {
         runtime->pto2_task_window_size = parse_env_uint64("PTO2_RING_TASK_WINDOW", 4, true);

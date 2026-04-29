@@ -170,7 +170,9 @@ int32_t AicpuExecutor::init(Runtime *runtime) {
         return -1;
     }
 
-    if (sched_ctx_.init(runtime, thread_num_, sched_thread_num_, orch_to_sched_, get_platform_regs()) != 0) {
+    if (sched_ctx_.init(
+            runtime, thread_num_, sched_thread_num_, orch_to_sched_, get_platform_regs(), runtime->sequential_dispatch
+        ) != 0) {
         init_failed_.store(true, std::memory_order_release);
         return -1;
     }

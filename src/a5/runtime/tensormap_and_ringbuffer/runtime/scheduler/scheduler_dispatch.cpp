@@ -384,6 +384,7 @@ int32_t SchedulerContext::resolve_and_dispatch(Runtime *runtime, int32_t thread_
     int32_t deferred_release_count = 0;
 
     bool cores_released = false;
+    bool seq_dispatch_started = false;
 
 #if PTO2_PROFILING
     l2_perf.sched_start_ts = get_sys_cnt_aicpu();
@@ -507,30 +508,52 @@ int32_t SchedulerContext::resolve_and_dispatch(Runtime *runtime, int32_t thread_
 #endif
 
         // Phase 4: Two-phase dispatch (idle then pending)
-        const PTO2ResourceShape *dispatch_order = get_dispatch_order(thread_idx);
-        bool entered_drain = false;
-
-        for (int32_t si = 0; si < PTO2_NUM_RESOURCE_SHAPES && !entered_drain; si++) {
-            PTO2ResourceShape shape = dispatch_order[si];
-            for (auto phase : {CoreTracker::DispatchPhase::IDLE, CoreTracker::DispatchPhase::PENDING}) {
-                dispatch_shape(
-                    runtime, thread_idx, shape, phase, local_bufs[static_cast<int32_t>(shape)], tracker, entered_drain,
-                    made_progress, try_pushed
-                );
-            }
-        }
-
-        // Requeue local buffers to global ready queue
-        for (int32_t si = 0; si < PTO2_NUM_RESOURCE_SHAPES; si++) {
-            PTO2ResourceShape shape = dispatch_order[si];
-            auto &local_buf = local_bufs[static_cast<int32_t>(shape)];
-            auto &ready_queue = sched_->ready_queues[static_cast<int32_t>(shape)];
-#if PTO2_SCHED_PROFILING
-            l2_perf.local_overflow_count += local_buf.count;
+        // In sequential dispatch mode, defer all AICore dispatch until orchestration completes.
+        // Thread 0 continues draining the wiring queue (Phase 3) so the graph is fully wired
+        // by the time dispatch begins.
+        if (sequential_dispatch_ && !orchestrator_done_) {
+            idle_iterations = 0;
+            // Skip dispatch — orch still running
+        } else if (sequential_dispatch_ && !seq_dispatch_started) {
+            // Orchestration just completed — reset profiling counters so scheduler
+            // timing reflects only the pure dispatch+execution phase.
+            seq_dispatch_started = true;
+            idle_iterations = 0;
+#if PTO2_PROFILING
+            l2_perf.sched_start_ts = get_sys_cnt_aicpu();
+            l2_perf.sched_idle_cycle = 0;
+            l2_perf.sched_wiring_cycle = 0;
+            l2_perf.sched_complete_cycle = 0;
+            l2_perf.sched_dispatch_cycle = 0;
+            l2_perf.sched_loop_count = 0;
 #endif
-            if (local_buf.count > 0) {
-                ready_queue.push_batch(local_buf.slot_states, local_buf.count);
-                local_buf.count = 0;
+        }
+        if (!sequential_dispatch_ || orchestrator_done_) {
+            const PTO2ResourceShape *dispatch_order = get_dispatch_order(thread_idx);
+            bool entered_drain = false;
+
+            for (int32_t si = 0; si < PTO2_NUM_RESOURCE_SHAPES && !entered_drain; si++) {
+                PTO2ResourceShape shape = dispatch_order[si];
+                for (auto phase : {CoreTracker::DispatchPhase::IDLE, CoreTracker::DispatchPhase::PENDING}) {
+                    dispatch_shape(
+                        runtime, thread_idx, shape, phase, local_bufs[static_cast<int32_t>(shape)], tracker,
+                        entered_drain, made_progress, try_pushed
+                    );
+                }
+            }
+
+            // Requeue local buffers to global ready queue
+            for (int32_t si = 0; si < PTO2_NUM_RESOURCE_SHAPES; si++) {
+                PTO2ResourceShape shape = dispatch_order[si];
+                auto &local_buf = local_bufs[static_cast<int32_t>(shape)];
+                auto &ready_queue = sched_->ready_queues[static_cast<int32_t>(shape)];
+#if PTO2_SCHED_PROFILING
+                l2_perf.local_overflow_count += local_buf.count;
+#endif
+                if (local_buf.count > 0) {
+                    ready_queue.push_batch(local_buf.slot_states, local_buf.count);
+                    local_buf.count = 0;
+                }
             }
         }
 

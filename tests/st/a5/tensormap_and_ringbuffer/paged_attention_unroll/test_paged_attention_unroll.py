@@ -69,7 +69,7 @@ class TestPagedAttentionUnroll(SceneTestCase):
         {
             "name": "Case1",
             "platforms": ["a5"],
-            "config": {"aicpu_thread_num": 4, "block_dim": 36},
+            "config": {"aicpu_thread_num": 2, "block_dim": 18},
             "params": {
                 "batch": 256,
                 "num_heads": 16,
@@ -84,7 +84,7 @@ class TestPagedAttentionUnroll(SceneTestCase):
         {
             "name": "Case2",
             "platforms": ["a5"],
-            "config": {"aicpu_thread_num": 4, "block_dim": 36},
+            "config": {"aicpu_thread_num": 4, "block_dim": 18},
             "manual": True,
             "params": {
                 "batch": 64,
@@ -100,7 +100,7 @@ class TestPagedAttentionUnroll(SceneTestCase):
         {
             "name": "Case3",
             "platforms": ["a5"],
-            "config": {"aicpu_thread_num": 4, "block_dim": 36},
+            "config": {"aicpu_thread_num": 2, "block_dim": 36},
             "manual": True,
             "params": {
                 "batch": 64,

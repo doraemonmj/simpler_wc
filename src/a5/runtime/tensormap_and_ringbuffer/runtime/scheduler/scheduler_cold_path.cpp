@@ -616,7 +616,8 @@ void SchedulerContext::emergency_shutdown(Runtime *runtime) {
 // Lifecycle: init / deinit
 // =============================================================================
 int32_t SchedulerContext::init(
-    Runtime *runtime, int32_t thread_num, int32_t sched_thread_num, bool orch_to_sched, uint64_t regs_base
+    Runtime *runtime, int32_t thread_num, int32_t sched_thread_num, bool orch_to_sched, uint64_t regs_base,
+    bool sequential_dispatch
 ) {
     always_assert(runtime != nullptr);
 
@@ -627,6 +628,7 @@ int32_t SchedulerContext::init(
     thread_num_ = thread_num;
     sched_thread_num_ = sched_thread_num;
     orch_to_sched_ = orch_to_sched;
+    sequential_dispatch_ = sequential_dispatch;
     regs_ = regs_base;
 
     // Discover cores and assign to scheduler threads.
@@ -718,6 +720,7 @@ void SchedulerContext::deinit() {
     thread_num_ = 0;
     sched_thread_num_ = 0;
     orch_to_sched_ = false;
+    sequential_dispatch_ = false;
     active_sched_threads_ = 0;
     for (int32_t t = 0; t < MAX_AICPU_THREADS; t++) {
         core_trackers_[t] = CoreTracker{};
@@ -759,6 +762,10 @@ void SchedulerContext::on_orchestration_done(
 #endif
     }
     orchestrator_done_ = true;
+
+    if (sequential_dispatch_) {
+        DEV_ALWAYS("Thread %d: Sequential dispatch: orchestration done, dispatch starting", thread_idx);
+    }
 
     // Check for fatal error from orchestration; if so, shut down immediately.
     int32_t orch_err = 0;

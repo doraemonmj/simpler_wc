@@ -184,6 +184,13 @@ public:
     // Controlled via PTO2_ORCH_TO_SCHED environment variable.
     bool orch_to_sched;
 
+    // Sequential dispatch mode: orchestration runs to completion before any AICore dispatch begins.
+    // Thread 0 still drains the wiring queue during orchestration so the graph is fully wired
+    // by the time dispatch starts. Useful for benchmarking orch and dispatch phases independently.
+    // Requires ring buffers large enough to hold the entire task graph (no back-pressure reclaim).
+    // Controlled via PTO2_SEQUENTIAL_DISPATCH environment variable.
+    bool sequential_dispatch;
+
 private:
     // Tensor pairs for host-device memory tracking
     TensorPair tensor_pairs[RUNTIME_MAX_TENSOR_PAIRS];

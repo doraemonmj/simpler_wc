@@ -28,20 +28,10 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # --- tensormap_and_ringbuffer ---
 declare -A TMR_EXAMPLE_CASES=(
-    [alternating_matmul_add]="Case1"
-    [benchmark_bgemm]="Case0"
     [paged_attention_unroll]="Case1,Case2"
-    [paged_attention_unroll_manual_scope]="Case1,Case2"
-    [batch_paged_attention]="Case1"
-    [spmd_paged_attention]="Case1,Case2"
 )
 TMR_EXAMPLE_ORDER=(
-    alternating_matmul_add
-    benchmark_bgemm
     paged_attention_unroll
-    paged_attention_unroll_manual_scope
-    batch_paged_attention
-    spmd_paged_attention
 )
 
 # --- aicpu_build_graph ---
@@ -169,15 +159,20 @@ esac
 # ---------------------------------------------------------------------------
 # Resolve device log directory (mirrors simpler_setup/device_log_resolver.py)
 # ---------------------------------------------------------------------------
-if [[ -n "${ASCEND_WORK_PATH:-}" ]]; then
+if [[ -n "${ASCEND_WORK_PATH:-}" ]] && [[ -d "$ASCEND_WORK_PATH/log/debug" ]]; then
     LOG_ROOT="$ASCEND_WORK_PATH/log/debug"
-    if [[ ! -d "$LOG_ROOT" ]]; then
-        LOG_ROOT="$HOME/ascend/log/debug"
-    fi
+elif [[ -d "$HOME/ascend/log/debug" ]]; then
+    LOG_ROOT="$HOME/ascend/log/debug"
+elif [[ -d "/root/ascend/log/debug" ]]; then
+    LOG_ROOT="/root/ascend/log/debug"
 else
     LOG_ROOT="$HOME/ascend/log/debug"
 fi
 DEVICE_LOG_DIR="$LOG_ROOT/device-${DEVICE_ID}"
+if [[ ! -r "$DEVICE_LOG_DIR" ]]; then
+    echo "WARNING: $DEVICE_LOG_DIR not readable (permission issue or missing dir)"
+    echo "  Try: export ASCEND_WORK_PATH=<path> or run with appropriate permissions"
+fi
 
 # ---------------------------------------------------------------------------
 # parse_timing <log_file>
