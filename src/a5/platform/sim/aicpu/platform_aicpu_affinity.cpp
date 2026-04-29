@@ -42,3 +42,7 @@ bool platform_aicpu_affinity_gate(int32_t logical_count, int32_t total_launched)
 
     return survive;
 }
+
+int32_t platform_aicpu_affinity_thread_idx() {
+    return -1;
+}
