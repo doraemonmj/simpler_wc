@@ -21,8 +21,8 @@
 static constexpr int32_t MAX_GATE_THREADS = 16;
 
 // HT-enabled topology: only keep threads on these logical CPUs
-static constexpr int32_t ALLOWED_CPUS[] = {4,5,11,12};
-static constexpr int32_t ALLOWED_CPU_COUNT = 4;
+static constexpr int32_t ALLOWED_CPUS[] = {4,5,11};
+static constexpr int32_t ALLOWED_CPU_COUNT = 3;
 
 static std::atomic<uint64_t> s_cpumask{0};
 static std::atomic<int32_t> s_reported{0};
