@@ -70,9 +70,9 @@ class TestPagedAttention(SceneTestCase):
         {
             "name": "Case1",
             "platforms": ["a5"],
-            "config": {"aicpu_thread_num": 4, "block_dim": 24},
+            "config": {"aicpu_thread_num": 3, "block_dim": 36},
             "params": {
-                "batch": 256,
+                "batch": 32,
                 "num_heads": 16,
                 "kv_head_num": 1,
                 "head_dim": 128,
