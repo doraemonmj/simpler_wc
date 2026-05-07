@@ -228,29 +228,5 @@ static __aicore__ void softmax_prepare_n_impl(
 }
 
 extern "C" __aicore__ void kernel_entry(__gm__ int64_t *args) {
-    __gm__ Tensor *sij_buf = reinterpret_cast<__gm__ Tensor *>(args[0]);
-    __gm__ Tensor *pij_buf = reinterpret_cast<__gm__ Tensor *>(args[1]);
-    __gm__ Tensor *mij = reinterpret_cast<__gm__ Tensor *>(args[2]);
-    __gm__ Tensor *lij = reinterpret_cast<__gm__ Tensor *>(args[3]);
-    union {
-        uint64_t u;
-        float f;
-    } scale_conv;
-    scale_conv.u = static_cast<uint64_t>(args[4]);
-    float scale_value = scale_conv.f;
-    uint64_t n_blocks = static_cast<uint64_t>(args[5]);
-    uint64_t valid_len_last = static_cast<uint64_t>(args[6]);
-
-    __gm__ float *sij_base = reinterpret_cast<__gm__ float *>(sij_buf->buffer.addr) + sij_buf->start_offset;
-    __gm__ bfloat16_t *pij_base = reinterpret_cast<__gm__ bfloat16_t *>(pij_buf->buffer.addr) + pij_buf->start_offset;
-    __gm__ float *mij_addr = reinterpret_cast<__gm__ float *>(mij->buffer.addr) + mij->start_offset;
-    __gm__ float *lij_addr = reinterpret_cast<__gm__ float *>(lij->buffer.addr) + lij->start_offset;
-
-    uint64_t q_tile_size = static_cast<uint64_t>(sij_buf->shapes[0]);
-
-    if (q_tile_size == 16) {
-        softmax_prepare_n_impl<16, 128>(sij_base, scale_value, pij_base, mij_addr, lij_addr, n_blocks, valid_len_last);
-    } else {
-        softmax_prepare_n_impl<64, 64>(sij_base, scale_value, pij_base, mij_addr, lij_addr, n_blocks, valid_len_last);
-    }
+    return;
 }

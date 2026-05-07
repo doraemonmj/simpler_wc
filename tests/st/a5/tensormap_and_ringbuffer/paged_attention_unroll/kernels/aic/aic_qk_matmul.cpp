@@ -110,25 +110,7 @@ static __aicore__ void qk_matmul_n_impl(
 }
 
 extern "C" __aicore__ void kernel_entry(__gm__ int64_t *args) {
-    __gm__ Tensor *qi = reinterpret_cast<__gm__ Tensor *>(args[0]);
-    __gm__ Tensor *key_cache = reinterpret_cast<__gm__ Tensor *>(args[1]);
-    __gm__ Tensor *block_table_t = reinterpret_cast<__gm__ Tensor *>(args[2]);
-    __gm__ Tensor *sij_buf = reinterpret_cast<__gm__ Tensor *>(args[3]);
-    uint64_t n_blocks = static_cast<uint64_t>(args[4]);
-    uint64_t bt_offset = static_cast<uint64_t>(args[5]);
-
-    __gm__ bfloat16_t *qi_base = reinterpret_cast<__gm__ bfloat16_t *>(qi->buffer.addr) + qi->start_offset;
-    __gm__ bfloat16_t *key_base = reinterpret_cast<__gm__ bfloat16_t *>(key_cache->buffer.addr);
-    __gm__ float *sij_base = reinterpret_cast<__gm__ float *>(sij_buf->buffer.addr) + sij_buf->start_offset;
-    __gm__ int32_t *bt = reinterpret_cast<__gm__ int32_t *>(block_table_t->buffer.addr);
-
-    uint64_t q_tile_size = static_cast<uint64_t>(qi->shapes[0]);
-
-    if (q_tile_size == 16) {
-        qk_matmul_n_impl<16, 128, 128>(qi_base, key_base, sij_base, n_blocks, bt, bt_offset);
-    } else {
-        qk_matmul_n_impl<64, 128, 64>(qi_base, key_base, sij_base, n_blocks, bt, bt_offset);
-    }
+    return;
 }
 
 // NOLINTEND(clang-diagnostic-error,bugprone-reserved-identifier,bugprone-easily-swappable-parameters,modernize-avoid-c-arrays,modernize-use-auto)
