@@ -30,7 +30,7 @@ class TestPagedAttentionUnroll(SceneTestCase):
     CALLABLE = {
         "orchestration": {
             "source": "kernels/orchestration/paged_attention_orch.cpp",
-            "function_name": "build_paged_attention_graph",
+            "function_name": "aicpu_orchestration_entry",
             "signature": [D.IN, D.IN, D.IN, D.IN, D.IN, D.OUT],
         },
         "incores": [
@@ -100,7 +100,7 @@ class TestPagedAttentionUnroll(SceneTestCase):
         {
             "name": "Case3",
             "platforms": ["a5"],
-            "config": {"aicpu_thread_num": 4, "block_dim": 36},
+            "config": {"aicpu_thread_num": 2, "block_dim": 36},
             "manual": True,
             "params": {
                 "batch": 64,
