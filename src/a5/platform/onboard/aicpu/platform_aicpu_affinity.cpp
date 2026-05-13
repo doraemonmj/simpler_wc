@@ -22,7 +22,7 @@ static constexpr int32_t MAX_GATE_THREADS = 16;
 
 // HT-enabled topology: only keep threads on these logical CPUs.
 // The LAST entry is assigned as orchestrator; all others are schedulers.
-static constexpr int32_t ALLOWED_CPUS[] = {4, 11, 5};
+static constexpr int32_t ALLOWED_CPUS[] = {6,7,13,14,4};
 static constexpr int32_t ALLOWED_CPU_COUNT = sizeof(ALLOWED_CPUS) / sizeof(ALLOWED_CPUS[0]);
 
 static std::atomic<int32_t> s_reported{0};

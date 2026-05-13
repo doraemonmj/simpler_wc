@@ -402,16 +402,6 @@ int32_t SchedulerContext::handshake_all_cores(Runtime *runtime) {
     // Get platform physical cores count for validation
     uint32_t max_physical_cores_count = platform_get_physical_cores_count();
 
-    // Die filtering: only keep die1 cores for scheduling.
-    // Non-target cores get EXIT_SIGNAL inline (fire-and-forget) — no aicore_done
-    // wait, no poll for EXITED_VALUE. They exit on their own; rtStreamSynchronize
-    // guarantees completion before the host returns.
-    constexpr uint32_t SUB_CORE_PER_DIE = PLATFORM_AICORE_PER_DIE * PLATFORM_CORES_PER_BLOCKDIM;
-    constexpr uint32_t TARGET_DIE = 1;
-    int32_t block_dim = cores_total_num_ / PLATFORM_CORES_PER_BLOCKDIM;
-    int32_t filtered_aic = 0;
-    int32_t filtered_aiv = 0;
-
     // Step 2: Wait for all cores to respond, collect core type and register addresses
     bool handshake_failed = false;
     for (int32_t i = 0; i < cores_total_num_; i++) {
@@ -433,37 +423,18 @@ int32_t SchedulerContext::handshake_all_cores(Runtime *runtime) {
         uint64_t *regs = reinterpret_cast<uint64_t *>(regs_);
         uint64_t reg_addr = regs[physical_core_id];
 
-        // Store reg_addr for ALL cores so emergency_shutdown can reach them
-        core_exec_states_[i].reg_addr = reg_addr;
-
-        // Die filtering: determine die before init so non-target cores skip
-        // platform_init and directly receive EXIT_SIGNAL (1 MMIO write instead of 2).
-        uint32_t die_idx = physical_core_id / SUB_CORE_PER_DIE;
-        if (die_idx != TARGET_DIE) {
-            write_reg(reg_addr, RegId::DATA_MAIN_BASE, AICORE_EXIT_SIGNAL);
-            OUT_OF_ORDER_STORE_BARRIER();
-            hank->aicpu_regs_ready = 1;
-            bool is_aic = (i < block_dim);
-            if (is_aic) {
-                filtered_aic++;
-            } else {
-                filtered_aiv++;
-            }
-            LOG_INFO_V0(
-                "Core %d: %s die%u (physical_id=%u), exit signal sent", i, is_aic ? "AIC" : "AIV", die_idx,
-                physical_core_id
-            );
-            continue;
-        }
-
-        // Target die: normal handshake path
+        // Initialize AICore registers after discovery (first round)
         platform_init_aicore_regs(reg_addr);
         OUT_OF_ORDER_STORE_BARRIER();
         hank->aicpu_regs_ready = 1;
 
+        OUT_OF_ORDER_STORE_BARRIER();
+
         while (hank->aicore_done == 0) {}
 
         CoreType type = hank->core_type;
+
+        core_exec_states_[i].reg_addr = reg_addr;
 
 #if PTO2_PROFILING
         physical_core_ids_[i] = physical_core_id;
@@ -477,10 +448,10 @@ int32_t SchedulerContext::handshake_all_cores(Runtime *runtime) {
 
         if (type == CoreType::AIC) {
             aic_worker_ids_[aic_count_++] = i;
-            LOG_INFO_V0("Core %d: AIC, die%u, physical_id=%u, reg_addr=0x%lx", i, die_idx, physical_core_id, reg_addr);
+            LOG_INFO_V0("Core %d: AIC, physical_id=%u, reg_addr=0x%lx", i, physical_core_id, reg_addr);
         } else {
             aiv_worker_ids_[aiv_count_++] = i;
-            LOG_INFO_V0("Core %d: AIV, die%u, physical_id=%u, reg_addr=0x%lx", i, die_idx, physical_core_id, reg_addr);
+            LOG_INFO_V0("Core %d: AIV, physical_id=%u, reg_addr=0x%lx", i, physical_core_id, reg_addr);
         }
     }
 
@@ -489,10 +460,7 @@ int32_t SchedulerContext::handshake_all_cores(Runtime *runtime) {
         return -1;
     }
 
-    LOG_INFO_V0(
-        "Core discovery complete: %d AIC, %d AIV (filtered %d AIC + %d AIV)", aic_count_, aiv_count_, filtered_aic,
-        filtered_aiv
-    );
+    LOG_INFO_V0("Core discovery complete: %d AIC, %d AIV", aic_count_, aiv_count_);
     return 0;
 }
 

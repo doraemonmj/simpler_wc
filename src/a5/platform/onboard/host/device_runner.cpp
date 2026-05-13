@@ -312,7 +312,7 @@ int DeviceRunner::run(
             LOG_ERROR(
                 "block_dim (%d) not evenly divisible by scheduler_thread_num (%d)", block_dim, scheduler_thread_num
             );
-            return -1;
+            // return -1;
         }
     } else {
         LOG_INFO_V0(
