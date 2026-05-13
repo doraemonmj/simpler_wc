@@ -312,6 +312,25 @@ void SchedulerContext::dispatch_shape(
 }
 
 // =============================================================================
+// Pre-dispatch: wait for orchestration, bulk-wire, handle core transition
+// =============================================================================
+
+int32_t SchedulerContext::wait_orchestration_and_wire(int32_t thread_idx) {
+    // All scheduler threads WFE sleep during orchestration to release
+    // execution resources to the orchestrator on shared physical cores.
+    while (!orchestrator_done_) {
+        __asm__ volatile("wfe" ::: "memory");
+    }
+
+    // After orchestration completes, thread 0 bulk-drains the wiring queue.
+    if (thread_idx == 0) {
+        while (sched_->drain_wiring_queue(true) > 0) {
+        }
+    }
+    return 0;
+}
+
+// =============================================================================
 // Main scheduler dispatch loop
 // =============================================================================
 
@@ -363,6 +382,13 @@ int32_t SchedulerContext::resolve_and_dispatch(Runtime *runtime, int32_t thread_
         while (!init_complete_.load(std::memory_order_acquire)) {
             SPIN_WAIT_HINT();
         }
+    }
+
+    // Wait for orchestration (must be after one-time init,
+    // because orch thread waits on init_complete_ before orchestrating).
+    wait_orchestration_and_wire(thread_idx);
+    if (completed_.load(std::memory_order_acquire)) {
+        return 0;
     }
 
     LOG_INFO_V0("Thread %d: PTO2 dispatch starting with %d cores", thread_idx, tracker.core_num());
@@ -515,8 +541,8 @@ int32_t SchedulerContext::resolve_and_dispatch(Runtime *runtime, int32_t thread_
             PTO2ResourceShape shape = dispatch_order[si];
             for (auto phase : {CoreTracker::DispatchPhase::IDLE, CoreTracker::DispatchPhase::PENDING}) {
                 dispatch_shape(
-                    runtime, thread_idx, shape, phase, local_bufs[static_cast<int32_t>(shape)], tracker, entered_drain,
-                    made_progress, try_pushed
+                    runtime, thread_idx, shape, phase, local_bufs[static_cast<int32_t>(shape)], tracker,
+                    entered_drain, made_progress, try_pushed
                 );
             }
         }

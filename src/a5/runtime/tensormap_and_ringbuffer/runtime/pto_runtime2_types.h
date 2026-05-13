@@ -114,7 +114,7 @@
 #define PTO2_READY_QUEUE_SIZE 65536  // Per-shape queue size
 
 // Wiring queue
-#define PTO2_WRIRING_QUEUE_SIZE 1024  // Per-shape queue size
+#define PTO2_WRIRING_QUEUE_SIZE 2048  // Must be power-of-2, >= max task count
 
 // Fanin storage
 #define PTO2_FANIN_INLINE_CAP 64

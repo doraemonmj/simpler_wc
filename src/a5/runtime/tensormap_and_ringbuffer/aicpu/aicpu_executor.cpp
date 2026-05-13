@@ -46,6 +46,9 @@
 // Core type definitions
 #include "common/core_type.h"
 
+// Affinity gate — deterministic thread index assignment
+#include "aicpu/platform_aicpu_affinity.h"
+
 // CoreCallable for resolved dispatch address
 #include "callable.h"
 
@@ -185,8 +188,9 @@ int32_t AicpuExecutor::init(Runtime *runtime) {
  * Shutdown AICore - Send exit signal via registers to all AICore kernels
  */
 int32_t AicpuExecutor::run(Runtime *runtime) {
-    int32_t thread_idx = thread_idx_++;
-    LOG_INFO_V0("Thread %d: Start", thread_idx);
+    int32_t affinity_idx = platform_aicpu_affinity_thread_idx();
+    int32_t thread_idx = (affinity_idx >= 0) ? affinity_idx : thread_idx_++;
+    LOG_INFO_V0("Thread %d: Start (affinity_idx=%d)", thread_idx, affinity_idx);
 
     // Orchestrator check
     if (thread_idx >= sched_thread_num_) {

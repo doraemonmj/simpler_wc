@@ -69,6 +69,11 @@ public:
     // Per-thread execution entry points (called by AicpuExecutor::run)
     // =========================================================================
 
+    // Wait for orchestration to complete, bulk-drain the wiring queue, and
+    // handle orch→sched core transition. Must be called before resolve_and_dispatch().
+    // Returns 0 on success, or 0 with completed_==true if early exit (fatal error).
+    int32_t wait_orchestration_and_wire(int32_t thread_idx);
+
     // Main scheduler thread entry: poll completion + dispatch ready tasks.
     int32_t resolve_and_dispatch(Runtime *runtime, int32_t thread_idx);
 
