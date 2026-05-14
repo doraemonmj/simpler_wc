@@ -63,7 +63,7 @@ const PTO2ResourceShape *SchedulerContext::get_dispatch_order(int32_t thread_idx
 }
 
 int SchedulerContext::pop_ready_tasks_batch(
-    PTO2ResourceShape shape, int32_t thread_idx, PTO2LocalReadyBuffer &local_buf, PTO2TaskSlotState **out, int max_count
+    PTO2ResourceShape shape, int32_t thread_idx, PTO2LocalReadyBuffer *local_buf, PTO2TaskSlotState **out, int max_count
 ) {
 #if PTO2_SCHED_PROFILING
     auto &l2_perf = sched_l2_perf_[thread_idx];
@@ -233,7 +233,7 @@ void SchedulerContext::dispatch_block(
 
 void SchedulerContext::dispatch_shape(
     Runtime *runtime, int32_t thread_idx, PTO2ResourceShape shape, CoreTracker::DispatchPhase phase,
-    PTO2LocalReadyBuffer &local_buf, CoreTracker &tracker, bool &entered_drain, bool &made_progress, bool &try_pushed
+    PTO2LocalReadyBuffer *local_buf, CoreTracker &tracker, bool &entered_drain, bool &made_progress, bool &try_pushed
 ) {
 #if PTO2_SCHED_PROFILING
     auto &l2_perf = sched_l2_perf_[thread_idx];
@@ -513,12 +513,20 @@ int32_t SchedulerContext::resolve_and_dispatch(Runtime *runtime, int32_t thread_
 
         for (int32_t si = 0; si < PTO2_NUM_RESOURCE_SHAPES && !entered_drain; si++) {
             PTO2ResourceShape shape = dispatch_order[si];
-            for (auto phase : {CoreTracker::DispatchPhase::IDLE, CoreTracker::DispatchPhase::PENDING}) {
-                dispatch_shape(
-                    runtime, thread_idx, shape, phase, local_bufs[static_cast<int32_t>(shape)], tracker, entered_drain,
-                    made_progress, try_pushed
-                );
-            }
+            auto &local_buf = local_bufs[static_cast<int32_t>(shape)];
+            // IDLE phase: pull from local buffer first, then global queue.
+            dispatch_shape(
+                runtime, thread_idx, shape, CoreTracker::DispatchPhase::IDLE, &local_buf, tracker, entered_drain,
+                made_progress, try_pushed
+            );
+#if !PTO2_DISABLE_DUAL_ISSUE
+            // PENDING phase: pass nullptr so tasks just released into the local buffer
+            //   are not immediately re-claimed by the same thread's pending slots.
+            dispatch_shape(
+                runtime, thread_idx, shape, CoreTracker::DispatchPhase::PENDING, nullptr, tracker, entered_drain,
+                made_progress, try_pushed
+            );
+#endif
         }
 
         // Requeue local buffers to global ready queue

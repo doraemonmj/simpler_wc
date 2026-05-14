@@ -204,7 +204,7 @@ private:
     static const PTO2ResourceShape *get_dispatch_order(int32_t thread_idx);
 
     int pop_ready_tasks_batch(
-        PTO2ResourceShape shape, int32_t thread_idx, PTO2LocalReadyBuffer &local_buf, PTO2TaskSlotState **out,
+        PTO2ResourceShape shape, int32_t thread_idx, PTO2LocalReadyBuffer *local_buf, PTO2TaskSlotState **out,
         int max_count
     );
 
@@ -229,7 +229,7 @@ private:
 
     void dispatch_shape(
         Runtime *runtime, int32_t thread_idx, PTO2ResourceShape shape, CoreTracker::DispatchPhase phase,
-        PTO2LocalReadyBuffer &local_buf, CoreTracker &tracker, bool &entered_drain, bool &made_progress,
+        PTO2LocalReadyBuffer *local_buf, CoreTracker &tracker, bool &entered_drain, bool &made_progress,
         bool &try_pushed
     );
 
