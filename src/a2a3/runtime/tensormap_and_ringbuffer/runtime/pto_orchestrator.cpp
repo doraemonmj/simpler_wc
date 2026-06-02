@@ -66,6 +66,7 @@ dep_gen_aicpu_record_submit(uint64_t, bool, int, const void *const *, const uint
 // host builds fall back to this weak `false`. Gating here still skips the
 // cross-agent occupancy reads that feed the sample when scope_stats is disabled.
 extern "C" __attribute__((weak, visibility("hidden"))) bool is_scope_stats_enabled() { return false; }
+extern "C" __attribute__((weak, visibility("hidden"))) bool is_scope_stats_task_enabled() { return false; }
 
 // =============================================================================
 // Orchestrator Profiling (compile-time toggle)
@@ -680,6 +681,17 @@ static TaskOutputTensors submit_task_common(
     g_orch_submit_count++;
 #endif
     g_orch_submit_idx++;
+    // scope_stats per-task probe: one record per submit carrying this task's id
+    // and the ring/heap occupancy right after it was allocated. Gated on the
+    // weak-false is_scope_stats_task_enabled() so a disabled run pays one bool
+    // load; the collector further restricts to the enclosing scope's filter.
+    if (is_scope_stats_task_enabled()) {
+        auto &alloc = orch->rings[ring_id].task_allocator;
+        scope_stats_record_task(
+            task_id.raw, ring_id, alloc.task_tail(), alloc.task_head(), alloc.heap_tail(), alloc.heap_top(),
+            orch->tensor_map.current_used()
+        );
+    }
 #endif
     return result;
 }

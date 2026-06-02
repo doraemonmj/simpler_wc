@@ -98,7 +98,7 @@ class TestScopeStats(SceneTestCase):
 
     def test_run(self, st_platform, st_worker, request):
         super().test_run(st_platform, st_worker, request)
-        if not request.config.getoption("--enable-scope-stats", default=False):
+        if request.config.getoption("--enable-scope-stats", default=None) is None:
             return
         for case in self.CASES:
             if st_platform in case["platforms"]:
