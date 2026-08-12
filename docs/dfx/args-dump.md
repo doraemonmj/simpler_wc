@@ -92,7 +92,7 @@ python tests/st/<case>/test_<name>.py -p a2a3 -d 0 --dump-args   # partial (leve
 
 # pytest
 pytest tests/st/<case> --platform a5sim --dump-args 2
-# a5 host_build_graph has no examples — use the scene test
+# a5 host_build_graph has no dump_args example — use the scene test
 pytest tests/st/a5/host_build_graph/dump_args --platform a5sim --dump-args 2
 pytest tests/st/<case> --platform a2a3sim --dump-args 2
 pytest examples/a2a3/host_build_graph/vector_example --platform a2a3sim --dump-args 2

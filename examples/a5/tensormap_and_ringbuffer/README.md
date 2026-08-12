@@ -25,6 +25,7 @@ For the `Worker` API underneath the framework, see
 | [`paged_attention/`](paged_attention/) | Online softmax with mixed AIC/AIV execution, bfloat16, at production scale. Onboard only. |
 | [`paged_attention_manual_scope/`](paged_attention_manual_scope/) | The same computation with explicit scope control — all four kernels byte-identical to the baseline's, only the orchestration differs (52 lines of 288). See [`docs/manual-scope.md`](../../../docs/manual-scope.md). Also runs on sim. |
 | [`paged_attention_unroll_manual_scope/`](paged_attention_unroll_manual_scope/) | A second implementation, not a patch on the baseline: KV blocks batched into groups of `N_UNROLL`, four tasks per group instead of per block, with the kernels rewritten to match. Onboard only. |
+| [`qwen3_14b_decode/`](qwen3_14b_decode/) | Full 40-layer Qwen3-14B decode with CANN fused attention. Onboard only. |
 
 ## Asynchronous completion and cross-card transfer
 
@@ -72,6 +73,8 @@ sibling needs the same change.
 
 Only here: `bgemm` (a2a3 has `benchmark_bgemm` instead) and
 `urma_deferred_completion_demo`. a2a3 additionally carries
-`merge_pipeline_barrier`, `paged_attention_ringbuffer`, `prefetch_async_demo`,
-`qwen3_14b_decode`, and `scalar_data`, none of which have an a5 port —
-`tests/st` tracks that gap separately (PR #1450 ports the `tests/st` side).
+`paged_attention_ringbuffer` and `prefetch_async_demo`; `tests/st` tracks the
+remaining architecture gaps separately (PR #1450 ports the `tests/st` side).
+Qwen3-14B decode exists for both architectures; the A5 case carries the
+A5-specific generated AIC/AIV kernels and shares only architecture-compatible
+sources with the a2a3 harvest.

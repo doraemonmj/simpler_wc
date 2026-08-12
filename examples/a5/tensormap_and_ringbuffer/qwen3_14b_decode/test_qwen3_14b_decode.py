@@ -7,12 +7,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""Qwen3-14B three-layer decode coverage for host-built Graph Execution.
-
-Layer 0 records and executes the decoder-layer task graph. Layers 1 and 2 submit
-one Graph task each; the scheduler expands the saved topology and applies the
-new layer's boundary tensors.
-"""
+"""Qwen3-14B 40-layer decode on A5 with tensormap_and_ringbuffer."""
 
 from __future__ import annotations
 
@@ -25,17 +20,17 @@ from simpler_setup import SceneTestCase, scene_test
 from simpler_setup.goldens.qwen3_14b_decode import compute_golden as _decode_golden
 from simpler_setup.goldens.qwen3_14b_decode import generate_inputs as _decode_generate_inputs
 
-N_LAYERS = 3
+N_LAYERS = 40
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[4]
-QWEN_DIR = REPO_ROOT / "examples/a2a3/tensormap_and_ringbuffer/qwen3_14b_decode"
+REPO_ROOT = HERE.parents[3]
+SHARED_QWEN_DIR = REPO_ROOT / "examples/a2a3/tensormap_and_ringbuffer/qwen3_14b_decode"
 
 
-def _load_qwen_case():
-    module_name = "_qwen3_14b_graph_execution_base"
-    spec = importlib.util.spec_from_file_location(module_name, QWEN_DIR / "test_qwen3_14b_decode.py")
+def _load_shared_qwen_case():
+    module_name = "_qwen3_14b_a5_tmr_shared"
+    spec = importlib.util.spec_from_file_location(module_name, SHARED_QWEN_DIR / "test_qwen3_14b_decode.py")
     if spec is None or spec.loader is None:
-        raise RuntimeError("cannot load the Qwen3-14B decode case")
+        raise RuntimeError("cannot load the shared Qwen3-14B decode case")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
@@ -43,27 +38,28 @@ def _load_qwen_case():
 
 
 def _callable():
-    callable_cfg = copy.deepcopy(_load_qwen_case().CALLABLE)
-    callable_cfg["orchestration"]["source"] = str(HERE / "kernels/orchestration/qwen3_14b_3layer_graph_execution.cpp")
+    callable_cfg = copy.deepcopy(_load_shared_qwen_case().CALLABLE)
+    callable_cfg["orchestration"]["source"] = str(HERE / "kernels/orchestration/decode_fwd_layers.cpp")
     for incore in callable_cfg["incores"]:
-        incore["source"] = str(QWEN_DIR / incore["source"])
+        source = Path(incore["source"])
+        relative_source = source.relative_to(SHARED_QWEN_DIR) if source.is_absolute() else source
+        a5_source = HERE / relative_source
+        incore["source"] = str(a5_source if a5_source.is_file() else SHARED_QWEN_DIR / relative_source)
     return callable_cfg
 
 
-@scene_test(level=2, runtime="host_build_graph")
-class TestQwen314B3LayerGraphExecution(SceneTestCase):
+@scene_test(level=2, runtime="tensormap_and_ringbuffer")
+class TestQwen314BDecodeA5(SceneTestCase):
+    """Qwen3-14B decode, all 40 layers in one A5 dispatch."""
+
     RTOL = 5e-2
     ATOL = 1e-1
     CALLABLE = _callable()
 
     CASES = [
         {
-            "name": "GraphExecutionBatch16Seq3500",
-            "platforms": ["a2a3"],
-            "config": {"aicpu_thread_num": 4, "block_dim": 0},
-            # The three-layer fixture is about 3 GiB and compiles the complete
-            # Qwen decoder kernel set, so keep it out of routine CI.
-            "manual": True,
+            "name": "StressBatch16Seq3500",
+            "platforms": ["a5"],
             "params": {"seed": 1234, "seq_len": 3500},
         },
     ]

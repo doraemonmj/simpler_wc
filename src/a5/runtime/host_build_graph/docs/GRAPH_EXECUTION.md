@@ -162,12 +162,12 @@ void submit_qwen_decoder_layer(const CoreTaskArgs &args) {
     rt_submit_graph(&qwen_decoder_layer, args);
 }
 
-void decode_three_layers(
-    const std::array<ChipTensor, 3> &hidden,
-    const std::array<ChipTensor, 3> &attention_weight,
-    const std::array<ChipTensor, 3> &mlp_weight,
-    const std::array<ChipTensor, 3> &output,
-    const std::array<uint32_t, 3> &token_position
+void decode_layers(
+    const std::array<ChipTensor, 40> &hidden,
+    const std::array<ChipTensor, 40> &attention_weight,
+    const std::array<ChipTensor, 40> &mlp_weight,
+    const std::array<ChipTensor, 40> &output,
+    const std::array<uint32_t, 40> &token_position
 ) {
     for (std::size_t layer = 0; layer < hidden.size(); ++layer) {
         CoreTaskArgs args;
@@ -183,10 +183,10 @@ void decode_three_layers(
 }
 ```
 
-All three layers submit one Graph task each: the first records the sub-DAG off
-the ring and emits its Graph task, layers two and three replay the cached
-Definition when their ChipTensor metadata and boundary scalar count match. Each
-invocation patches the current layer's `token_position`; it is a dynamic
+All 40 layers submit one Graph task each: the first records the sub-DAG off the
+ring and emits its Graph task, while the remaining 39 replay the cached
+Definition when their ChipTensor metadata and boundary scalar count match.
+Each invocation patches the current layer's `token_position`; it is a dynamic
 boundary scalar refreshed on every submission and is not part of the Graph key.
 
 ## Definition
@@ -381,4 +381,7 @@ With L2 swimlane level 4:
 The scene coverage under `tests/st/a5/host_build_graph/graph_execution`
 includes an AIV fanin/fanout DAG, an AIC/AIV fanout/fanin DAG, and a three-slot
 multi-block MIX/SPMD Graph. Every scene invokes the same fixed Graph three
-times: one recording execution followed by two outer-Graph submissions.
+times: one recording execution followed by two outer-Graph submissions. The
+full-model example at `examples/a5/host_build_graph/qwen3_14b_decode` records
+one Qwen3-14B decoder layer and replays its Definition for the remaining 39
+layers using A5-specific in-core kernels.
