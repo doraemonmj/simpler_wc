@@ -1,141 +1,146 @@
-name: CI
+name: CI Network Provisioning Experiment
 
 permissions:
   contents: read
-  pull-requests: read
 
 on:
   pull_request:
-    branches: [main]
+    branches: [ci/downselect-sim-scenes]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  detect-changes:
-    uses: ./.github/workflows/_detect-changes.yml
-    with:
-      repository: ${{ github.event.pull_request.head.repo.full_name }}
-      ref: ${{ github.event.pull_request.head.sha }}
-      base_repository: ${{ github.event.pull_request.base.repo.full_name }}
-      base_ref: ${{ github.event.pull_request.base.ref }}
-      base_sha: ${{ github.event.pull_request.base.sha }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
-      runs_on: '["ubuntu-latest"]'
-
-  pre-commit:
-    uses: ./.github/workflows/_pre-commit.yml
-    with:
-      base_sha: ${{ github.event.pull_request.base.sha }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
-      runs_on: '["ubuntu-latest"]'
-      setup_variant: github
-
-  packaging-matrix:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.examples_only != 'true' && needs.detect-changes.outputs.tests_only != 'true'
+  compiler-setup:
+    name: compiler-setup (${{ matrix.variant }}, sample-${{ matrix.sample }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_packaging.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      python_version: ${{ matrix.python-version }}
+        variant: [baseline, no-update, direct-ppa]
+        sample: [1, 2, 3]
 
-  ut:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_ut-no-hardware.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      python_version: ${{ matrix.python-version }}
+    steps:
+      - name: Checkout target
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
-  st-sim-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_st-sim-a2a3.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      include_dfx_smokes: true
-      python_version: ${{ matrix.python-version }}
+      - name: Provision GCC 15 toolchain
+        env:
+          VARIANT: ${{ matrix.variant }}
+          EXPECTED_PPA_FINGERPRINT: 60C317803A41BA51845E371A1E9377A2BA9EF27F
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          total_started=$SECONDS
 
-  st-sim-a5:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a5_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_st-sim-a5.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      include_dfx_smokes: true
-      python_version: ${{ matrix.python-version }}
+          case "$VARIANT" in
+            baseline)
+              repo_started=$SECONDS
+              sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+              repo_seconds=$((SECONDS - repo_started))
+              apt_options=()
+              ;;
+            no-update)
+              repo_started=$SECONDS
+              sudo add-apt-repository -y --no-update ppa:ubuntu-toolchain-r/test
+              repo_seconds=$((SECONDS - repo_started))
+              apt_options=()
+              ;;
+            direct-ppa)
+              repo_started=$SECONDS
+              key_file="$RUNNER_TEMP/ubuntu-toolchain-r-test.asc"
+              curl --fail --silent --show-error --location \
+                --retry 2 --retry-all-errors --connect-timeout 10 --max-time 30 \
+                "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${EXPECTED_PPA_FINGERPRINT}" \
+                --output "$key_file"
+              actual_fingerprint="$(
+                gpg --show-keys --with-colons "$key_file" |
+                  awk -F: '$1 == "fpr" { print $10; exit }'
+              )"
+              if [[ "$actual_fingerprint" != "$EXPECTED_PPA_FINGERPRINT" ]]; then
+                echo "::error::unexpected PPA signing key: $actual_fingerprint"
+                exit 1
+              fi
+              sudo install -d -m 0755 /etc/apt/keyrings
+              sudo gpg --batch --yes --dearmor \
+                --output /etc/apt/keyrings/ubuntu-toolchain-r-test.gpg "$key_file"
+              source /etc/os-release
+              printf '%s\n' \
+                'Types: deb' \
+                'URIs: https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu/' \
+                "Suites: $VERSION_CODENAME" \
+                'Components: main' \
+                'Signed-By: /etc/apt/keyrings/ubuntu-toolchain-r-test.gpg' |
+                sudo tee /etc/apt/sources.list.d/ubuntu-toolchain-r-test.sources >/dev/null
+              repo_seconds=$((SECONDS - repo_started))
+              apt_options=(
+                -o Acquire::Retries=3
+                -o Acquire::http::Timeout=20
+                -o Acquire::https::Timeout=20
+              )
+              ;;
+            *)
+              echo "::error::unknown provisioning variant: $VARIANT"
+              exit 2
+              ;;
+          esac
 
-  profiling-flags-smoke:
-    needs: [detect-changes, pre-commit]
-    if: (needs.detect-changes.outputs.a2a3_changed == 'true' || needs.detect-changes.outputs.a5_changed == 'true') && needs.detect-changes.outputs.examples_only != 'true' && needs.detect-changes.outputs.tests_only != 'true'
-    uses: ./.github/workflows/_profiling-flags-smoke.yml
-    with:
-      runs_on: '["ubuntu-latest"]'
-      setup_variant: github
+          update_started=$SECONDS
+          sudo apt-get "${apt_options[@]}" update
+          update_seconds=$((SECONDS - update_started))
 
-  ut-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
-    uses: ./.github/workflows/_ut-npu-a2a3.yml
-    with:
-      runs_on: '["self-hosted","a2a3"]'
-      include_cann_examples: true
+          install_started=$SECONDS
+          sudo apt-get "${apt_options[@]}" install -y ninja-build
+          sudo apt-get "${apt_options[@]}" install -y g++-15 || \
+            sudo apt-get "${apt_options[@]}" install -y g++
+          if ! command -v g++-15 >/dev/null 2>&1; then
+            sudo ln -s "$(command -v g++)" /usr/local/bin/g++-15
+          fi
+          sudo apt-get "${apt_options[@]}" install -y graphviz
+          install_seconds=$((SECONDS - install_started))
+          total_seconds=$((SECONDS - total_started))
 
-  st-onboard-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-npu-a2a3.yml
-    with:
-      runs_on: '["self-hosted","a2a3"]'
-      include_dfx_smokes: true
-      a2a3_sdma_mode: marker
+          command -v gcc-15
+          command -v g++-15
+          command -v ninja
+          command -v dot
+          gcc-15 --version | head -1
+          g++-15 --version | head -1
 
-  # The only job that spans two machines. It is arch-specific and the most
-  # expensive thing in this file, so it gates exactly as st-onboard-a2a3 does —
-  # never on a weaker signal than a cheaper job, per
-  # .claude/rules/ci-change-detection.md.
-  st-pod-onboard-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-pod.yml
-    with:
-      platform: a2a3
-      runs_on: '["self-hosted","Linux","ARM64","a2a3pod"]'
+          {
+            echo "### $VARIANT / sample ${{ matrix.sample }}"
+            echo
+            echo '| phase | seconds |'
+            echo '| --- | ---: |'
+            echo "| repository setup | $repo_seconds |"
+            echo "| explicit apt update | $update_seconds |"
+            echo "| package install | $install_seconds |"
+            echo "| total provisioning | $total_seconds |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-  ut-a5:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
-    uses: ./.github/workflows/_ut-npu-a5.yml
-    with:
-      runs_on: '["self-hosted","a5"]'
-      include_cann_examples: true
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
 
-  st-onboard-a5:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a5_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-npu-a5.yml
-    with:
-      runs_on: '["self-hosted","a5"]'
-      include_dfx_smokes: true
+      - name: Build a5sim package
+        uses: ./.github/actions/setup-venv
+        with:
+          install-torch: "false"
+          build-packages: "scikit-build-core nanobind cmake>=3.15"
+          packages: "--no-build-isolation --config-settings=build.targets=build_package_a5sim ."
+
+      - name: Verify package and runtime artifacts
+        run: |
+          .venv/bin/python -c 'import simpler; import simpler_setup'
+          test -f build/lib/a5/sim/host_build_graph/libhost_runtime.so
+          test -f build/lib/a5/sim/host_build_graph/libaicpu_kernel.so
+          test -f build/lib/a5/sim/host_build_graph/libaicore_kernel.so
+          test -f build/lib/a5/sim/tensormap_and_ringbuffer/libhost_runtime.so
+          test -f build/lib/a5/sim/tensormap_and_ringbuffer/libaicpu_kernel.so
+          test -f build/lib/a5/sim/tensormap_and_ringbuffer/libaicore_kernel.so
