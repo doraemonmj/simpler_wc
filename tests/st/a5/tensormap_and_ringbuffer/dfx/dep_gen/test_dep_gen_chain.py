@@ -83,6 +83,7 @@ class TestDepGenChain(SceneTestCase):
         {
             "name": "n_64_no_chain",
             "platforms": ["a5sim", "a5"],
+            "manual": ["a5sim"],
             "config": {"aicpu_thread_num": 2},
             "params": {"n": 64},
         },
@@ -95,12 +96,14 @@ class TestDepGenChain(SceneTestCase):
         {
             "name": "n_200_single_overflow",
             "platforms": ["a5sim", "a5"],
+            "manual": ["a5sim"],
             "config": {"aicpu_thread_num": 2},
             "params": {"n": 200},
         },
         {
             "name": "n_391_two_overflow",
             "platforms": ["a5sim", "a5"],
+            "manual": ["a5sim"],
             "config": {"aicpu_thread_num": 2},
             "params": {"n": 391},
         },
