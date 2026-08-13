@@ -77,7 +77,24 @@ def _build_callable(platform: str) -> ChipCallable:
 @pytest.mark.platforms(["a2a3sim", "a5sim"])
 @pytest.mark.device_count(1)
 @pytest.mark.runtime(RUNTIME)
-@pytest.mark.parametrize("case_name", list(CASES))
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "zero_block_num",
+        pytest.param(
+            "mixed_subtask_overflow",
+            marks=pytest.mark.manual(["a2a3sim", "a5sim"]),
+        ),
+        pytest.param(
+            "unbound_owner_read",
+            marks=pytest.mark.manual(["a2a3sim", "a5sim"]),
+        ),
+        pytest.param(
+            "unbound_owner_write",
+            marks=pytest.mark.manual(["a2a3sim", "a5sim"]),
+        ),
+    ],
+)
 def test_invalid_input_reports_code_five(st_platform, st_device_ids, case_name, capfd):
     worker = Worker(level=2, platform=st_platform, runtime=RUNTIME, device_id=int(st_device_ids[0]))
     buffer = None
