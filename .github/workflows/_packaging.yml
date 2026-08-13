@@ -83,9 +83,7 @@ jobs:
           fi
           if command -v ccache >/dev/null 2>&1; then
             export CCACHE_DIR="$RUNNER_TEMP/simpler-packaging-ccache"
-            # Keep one cold build per job while reusing identical objects
-            # across the remaining clean-install modes.
-            if ccache --clear && ccache --max-size=1G && ccache --zero-stats; then
+            if ccache --max-size=1G && ccache --zero-stats; then
               export CMAKE_C_COMPILER_LAUNCHER=ccache
               export CMAKE_CXX_COMPILER_LAUNCHER=ccache
               trap 'ccache --show-stats || true' EXIT
