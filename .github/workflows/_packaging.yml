@@ -69,14 +69,14 @@ jobs:
         if: inputs.setup_variant == 'self-cpu'
         uses: ./.github/actions/cache-pip
 
-      - name: Cache packaging compiler outputs
+      - name: Restore packaging compiler outputs
         if: inputs.setup_variant == 'github'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ runner.temp }}/simpler-packaging-ccache
-          key: packaging-ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.python_version }}-${{ github.sha }}
+          key: packaging-ccache-v3-${{ runner.os }}-${{ runner.arch }}-${{ inputs.python_version }}-${{ github.sha }}
           restore-keys: |
-            packaging-ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.python_version }}-
+            packaging-ccache-v3-${{ runner.os }}-${{ runner.arch }}-${{ inputs.python_version }}-
 
       - name: Install build + runtime deps in venv
         uses: ./.github/actions/setup-venv
@@ -92,7 +92,10 @@ jobs:
           fi
           if command -v ccache >/dev/null 2>&1; then
             export CCACHE_DIR="$RUNNER_TEMP/simpler-packaging-ccache"
-            if ccache --max-size=1G && ccache --zero-stats; then
+            if ccache --set-config=compiler_check=content \
+              && ccache --set-config=direct_mode=false \
+              && ccache --max-size=1G \
+              && ccache --zero-stats; then
               export CMAKE_C_COMPILER_LAUNCHER=ccache
               export CMAKE_CXX_COMPILER_LAUNCHER=ccache
               trap 'ccache --show-stats || true' EXIT
@@ -104,3 +107,10 @@ jobs:
             echo "::notice::ccache not found; running packaging matrix without compiler cache"
           fi
           bash tools/verify_packaging.sh
+
+      - name: Save packaging compiler outputs
+        if: inputs.setup_variant == 'github' && github.event_name == 'push'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/simpler-packaging-ccache
+          key: packaging-ccache-v3-${{ runner.os }}-${{ runner.arch }}-${{ inputs.python_version }}-${{ github.sha }}
