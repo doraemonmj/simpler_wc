@@ -69,6 +69,15 @@ jobs:
         if: inputs.setup_variant == 'self-cpu'
         uses: ./.github/actions/cache-pip
 
+      - name: Cache packaging compiler outputs
+        if: inputs.setup_variant == 'github'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/simpler-packaging-ccache
+          key: packaging-ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.python_version }}-${{ github.sha }}
+          restore-keys: |
+            packaging-ccache-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.python_version }}-
+
       - name: Install build + runtime deps in venv
         uses: ./.github/actions/setup-venv
         with:
@@ -83,9 +92,7 @@ jobs:
           fi
           if command -v ccache >/dev/null 2>&1; then
             export CCACHE_DIR="$RUNNER_TEMP/simpler-packaging-ccache"
-            # Keep one cold build per job while reusing identical objects
-            # across the remaining clean-install modes.
-            if ccache --clear && ccache --max-size=1G && ccache --zero-stats; then
+            if ccache --max-size=1G && ccache --zero-stats; then
               export CMAKE_C_COMPILER_LAUNCHER=ccache
               export CMAKE_CXX_COMPILER_LAUNCHER=ccache
               trap 'ccache --show-stats || true' EXIT

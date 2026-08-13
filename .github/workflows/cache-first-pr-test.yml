@@ -1,0 +1,22 @@
+name: First PR Cache Test
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [support/test-first-pr-cache-base]
+  pull_request:
+    branches: [support/test-first-pr-cache-base]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packaging-macos:
+    uses: ./.github/workflows/_packaging.yml
+    with:
+      runs_on: '["macos-latest"]'
+      setup_variant: github
+      python_version: "3.10"
