@@ -33,7 +33,7 @@ KERNELS_BASE = "../../../../../../examples/a2a3/tensormap_and_ringbuffer/vector_
 # The predicated_dispatch orchestration is the one host_build_graph case whose
 # graph carries all three edge sources, so it covers the tensormap (Step B) and
 # explicit (STEP 1) capture hooks the vector_example case above cannot reach.
-PREDICATED_KERNELS = "../../predicated_dispatch/kernels"
+PREDICATED_KERNELS = "../../../../common/predicated_dispatch/kernels"
 
 
 def _load_deps(test_cls_name, case_name, run_marker):

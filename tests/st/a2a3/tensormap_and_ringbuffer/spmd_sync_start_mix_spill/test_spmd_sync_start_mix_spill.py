@@ -33,6 +33,7 @@ SLOTS_PER_BLOCK = 3  # MIX consumer block writes 3 cache lines: AIC slot 0, AIV0
 MAX_CLUSTERS = 24
 MAX_AIV = MAX_CLUSTERS * 2
 MAX_TOTAL_CL = MAX_AIV + MAX_CLUSTERS * SLOTS_PER_BLOCK
+_SLOW_KERNELS = "../../../common/spmd_sync_start/kernels"
 
 
 @scene_test(level=2, runtime="tensormap_and_ringbuffer")
@@ -50,28 +51,28 @@ class TestSpmdSyncStartMixSpill(SceneTestCase):
             {
                 "func_id": 0,
                 "name": "SPMD_MIX_AIC",
-                "source": "kernels/aic/kernel_spmd_mix_slow.cpp",
+                "source": f"{_SLOW_KERNELS}/aic/kernel_spmd_mix_slow.cpp",
                 "core_type": "aic",
                 "signature": [D.INOUT],
             },
             {
                 "func_id": 1,
                 "name": "SPMD_MIX_AIV0",
-                "source": "kernels/aiv/kernel_spmd_mix_slow.cpp",
+                "source": f"{_SLOW_KERNELS}/aiv/kernel_spmd_mix_slow.cpp",
                 "core_type": "aiv",
                 "signature": [D.INOUT],
             },
             {
                 "func_id": 2,
                 "name": "SPMD_MIX_AIV1",
-                "source": "kernels/aiv/kernel_spmd_mix_slow.cpp",
+                "source": f"{_SLOW_KERNELS}/aiv/kernel_spmd_mix_slow.cpp",
                 "core_type": "aiv",
                 "signature": [D.INOUT],
             },
             {
                 "func_id": 3,
                 "name": "SPMD_WRITE_AIV",
-                "source": "kernels/aiv/kernel_spmd_write_slow.cpp",
+                "source": f"{_SLOW_KERNELS}/aiv/kernel_spmd_write_slow.cpp",
                 "core_type": "aiv",
                 "signature": [D.INOUT],
             },

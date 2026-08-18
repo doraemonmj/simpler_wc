@@ -24,6 +24,7 @@ from simpler.task_interface import ArgDirection as D
 from simpler_setup import SceneTestCase, TaskArgsBuilder, TensorArg, scene_test
 
 FLOATS_PER_CACHE_LINE = 16
+_SPMD_BASIC_KERNELS = "../../../common/tensormap_and_ringbuffer/spmd_basic/kernels"
 
 
 @scene_test(level=2, runtime="tensormap_and_ringbuffer")
@@ -35,7 +36,7 @@ class TestSpmdBasic(SceneTestCase):
 
     CALLABLE = {
         "orchestration": {
-            "source": "kernels/orchestration/spmd_basic_orch.cpp",
+            "source": f"{_SPMD_BASIC_KERNELS}/orchestration/spmd_basic_orch.cpp",
             "function_name": "aicpu_orchestration_entry",
             "signature": [D.INOUT],
         },
@@ -43,21 +44,21 @@ class TestSpmdBasic(SceneTestCase):
             {
                 "func_id": 0,
                 "name": "SPMD_READ_AIC",
-                "source": "kernels/aic/kernel_spmd_read.cpp",
+                "source": f"{_SPMD_BASIC_KERNELS}/aic/kernel_spmd_read.cpp",
                 "core_type": "aic",
                 "signature": [D.INOUT],
             },
             {
                 "func_id": 1,
                 "name": "SPMD_READ_AIV0",
-                "source": "kernels/aiv/kernel_spmd_read.cpp",
+                "source": f"{_SPMD_BASIC_KERNELS}/aiv/kernel_spmd_read.cpp",
                 "core_type": "aiv",
                 "signature": [D.INOUT],
             },
             {
                 "func_id": 2,
                 "name": "SPMD_READ_AIV1",
-                "source": "kernels/aiv/kernel_spmd_read.cpp",
+                "source": f"{_SPMD_BASIC_KERNELS}/aiv/kernel_spmd_read.cpp",
                 "core_type": "aiv",
                 "signature": [D.INOUT],
             },

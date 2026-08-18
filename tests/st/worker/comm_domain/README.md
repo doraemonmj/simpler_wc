@@ -12,5 +12,9 @@ These are runtime-mechanism tests rather than public communication-API
 tutorials. For a direct `Worker` communication-domain walkthrough, see
 [`examples/workers/l3/allreduce/`](../../../../examples/workers/l3/allreduce/).
 
+Kernels shared by multiple communication-domain contracts live in the local
+[`kernels/`](kernels/) directory. Contract-specific kernels remain beside each
+test.
+
 SDMA and URMA completion tests remain architecture-local because their
 workspace provisioning and availability gates differ.

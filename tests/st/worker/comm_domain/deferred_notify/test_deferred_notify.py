@@ -72,7 +72,7 @@ class TestDeferredNotifyDemo(SceneTestCase):
                     },
                     {
                         "func_id": 2,
-                        "source": "kernels/aiv/kernel_notify_wait.cpp",
+                        "source": "../kernels/aiv/kernel_notify_wait.cpp",
                         "core_type": "aiv",
                         "signature": [D.OUT, D.SCALAR, D.SCALAR],
                     },

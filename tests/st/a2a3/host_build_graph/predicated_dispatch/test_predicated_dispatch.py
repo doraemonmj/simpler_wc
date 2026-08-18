@@ -36,6 +36,7 @@ from simpler_setup import Scalar, SceneTestCase, TaskArgsBuilder, TensorArg, sce
 SENTINEL = 42.0
 POISON = 999.0  # what the clobber writes if the predicate lets it dispatch
 INIT_VAL = -1.0
+_PREDICATED_KERNELS = "../../../common/predicated_dispatch/kernels"
 
 
 @scene_test(level=2, runtime="host_build_graph")
@@ -47,7 +48,7 @@ class TestPredicatedDispatch(SceneTestCase):
 
     CALLABLE = {
         "orchestration": {
-            "source": "kernels/orchestration/predicated_dispatch_orch.cpp",
+            "source": f"{_PREDICATED_KERNELS}/orchestration/predicated_dispatch_orch.cpp",
             "function_name": "aicpu_orchestration_entry",
             "signature": [D.INOUT, D.INOUT, D.INOUT],  # X, Y, gate
         },
@@ -55,21 +56,21 @@ class TestPredicatedDispatch(SceneTestCase):
             {
                 "func_id": 0,
                 "name": "WRITE_CONST",
-                "source": "kernels/aic/kernel_write_const.cpp",
+                "source": f"{_PREDICATED_KERNELS}/aic/kernel_write_const.cpp",
                 "core_type": "aic",
                 "signature": [D.INOUT],
             },
             {
                 "func_id": 1,
                 "name": "COPY_FIRST",
-                "source": "kernels/aic/kernel_copy_first.cpp",
+                "source": f"{_PREDICATED_KERNELS}/aic/kernel_copy_first.cpp",
                 "core_type": "aic",
                 "signature": [D.IN, D.INOUT],
             },
             {
                 "func_id": 2,
                 "name": "CLOBBER",
-                "source": "kernels/aic/kernel_clobber.cpp",
+                "source": f"{_PREDICATED_KERNELS}/aic/kernel_clobber.cpp",
                 "core_type": "aic",
                 # Body of the predicated task; runs only if the predicate holds.
                 "signature": [D.INOUT],
@@ -77,7 +78,7 @@ class TestPredicatedDispatch(SceneTestCase):
             {
                 "func_id": 3,
                 "name": "WRITE_GATE",
-                "source": "kernels/aic/kernel_write_gate.cpp",
+                "source": f"{_PREDICATED_KERNELS}/aic/kernel_write_gate.cpp",
                 "core_type": "aic",
                 # One INOUT tensor (gate); the gate value rides as a trailing scalar.
                 "signature": [D.INOUT],

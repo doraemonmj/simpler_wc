@@ -29,6 +29,7 @@ SYNC_BASE_CL = PRODUCER_BLOCKS
 # Widest the platform allows: one consumer block per cluster.
 MAX_CLUSTERS = 24
 TOTAL_CL = SYNC_BASE_CL + MAX_CLUSTERS * 3
+_SLOW_KERNELS = "../../../common/spmd_sync_start/kernels"
 
 
 @scene_test(level=2, runtime="tensormap_and_ringbuffer")
@@ -46,7 +47,7 @@ class TestSpmdSyncStartEarlyDispatch(SceneTestCase):
             {
                 "func_id": 0,
                 "name": "SPMD_WRITE_AIC",
-                "source": "kernels/aiv/kernel_spmd_write_slow.cpp",
+                "source": f"{_SLOW_KERNELS}/aiv/kernel_spmd_write_slow.cpp",
                 "core_type": "aic",
                 "signature": [D.INOUT],
             },

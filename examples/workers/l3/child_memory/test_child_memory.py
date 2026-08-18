@@ -6,14 +6,14 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""Hardware ST for examples/workers/l3/child_memory."""
+"""a2a3 scene test for examples/workers/l3/child_memory."""
 
 import pytest
 
 from .main import run
 
 
-@pytest.mark.platforms(["a2a3sim", "a2a3", "a5sim"])
+@pytest.mark.platforms(["a2a3sim", "a2a3"])
 @pytest.mark.runtime("tensormap_and_ringbuffer")
 @pytest.mark.device_count(1)
 def test_child_memory(st_platform, st_device_ids):

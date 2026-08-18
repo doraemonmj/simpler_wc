@@ -40,6 +40,7 @@ MAX_CONSUMER_BLOCKS = 8
 TOTAL_BLOCKS = PRODUCER_BLOCKS + MAX_CONSUMER_BLOCKS
 BLOCKER_STATUS_CAPACITY = 72
 OUTPUT_CACHE_LINES = TOTAL_BLOCKS + BLOCKER_STATUS_CAPACITY
+_SLOW_KERNELS = "../../../../common/spmd_sync_start/kernels"
 
 
 @scene_test(level=2, runtime="tensormap_and_ringbuffer")
@@ -57,7 +58,7 @@ class TestSyncStartEarlyLocalOwner(SceneTestCase):
             {
                 "func_id": 0,
                 "name": "SLOW_FLAGGED_PRODUCER_AIC",
-                "source": "../../spmd_sync_start_early_dispatch/kernels/aiv/kernel_spmd_write_slow.cpp",
+                "source": f"{_SLOW_KERNELS}/aiv/kernel_spmd_write_slow.cpp",
                 "core_type": "aic",
                 "signature": [D.INOUT],
             },

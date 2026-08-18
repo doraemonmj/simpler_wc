@@ -33,6 +33,7 @@ SLOTS_PER_MIX_BLOCK = 3
 MAX_CLUSTERS = 36
 MAX_AIV = MAX_CLUSTERS * 2
 MAX_TOTAL_CL = MAX_AIV + 2 * MAX_CLUSTERS * SLOTS_PER_MIX_BLOCK
+_SLOW_KERNELS = "../common/spmd_sync_start/kernels"
 
 
 @scene_test(level=2, runtime="host_build_graph")
@@ -52,32 +53,28 @@ class TestHostBuildGraphWideDispatch(SceneTestCase):
             {
                 "func_id": 0,
                 "name": "SPMD_MIX_AIC",
-                "source": "../a2a3/tensormap_and_ringbuffer/spmd_sync_start_mix_spill/"
-                "kernels/aic/kernel_spmd_mix_slow.cpp",
+                "source": f"{_SLOW_KERNELS}/aic/kernel_spmd_mix_slow.cpp",
                 "core_type": "aic",
                 "signature": [D.INOUT],
             },
             {
                 "func_id": 1,
                 "name": "SPMD_MIX_AIV0",
-                "source": "../a2a3/tensormap_and_ringbuffer/spmd_sync_start_mix_spill/"
-                "kernels/aiv/kernel_spmd_mix_slow.cpp",
+                "source": f"{_SLOW_KERNELS}/aiv/kernel_spmd_mix_slow.cpp",
                 "core_type": "aiv",
                 "signature": [D.INOUT],
             },
             {
                 "func_id": 2,
                 "name": "SPMD_MIX_AIV1",
-                "source": "../a2a3/tensormap_and_ringbuffer/spmd_sync_start_mix_spill/"
-                "kernels/aiv/kernel_spmd_mix_slow.cpp",
+                "source": f"{_SLOW_KERNELS}/aiv/kernel_spmd_mix_slow.cpp",
                 "core_type": "aiv",
                 "signature": [D.INOUT],
             },
             {
                 "func_id": 3,
                 "name": "SPMD_WRITE_AIV",
-                "source": "../a2a3/tensormap_and_ringbuffer/spmd_sync_start_mix_spill/"
-                "kernels/aiv/kernel_spmd_write_slow.cpp",
+                "source": f"{_SLOW_KERNELS}/aiv/kernel_spmd_write_slow.cpp",
                 "core_type": "aiv",
                 "signature": [D.INOUT],
             },

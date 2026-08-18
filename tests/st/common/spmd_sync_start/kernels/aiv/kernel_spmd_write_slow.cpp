@@ -10,7 +10,7 @@
  */
 
 /**
- * SPMD Multi-Block Write Kernel with a spin delay (AIV)
+ * SPMD Multi-Block Write Kernel with a spin delay (AIC or AIV)
  *
  * Same result as the plain write kernel, but spins for `spin_iters` before the
  * store. A slow producer keeps its cores occupied long enough that a dependent
