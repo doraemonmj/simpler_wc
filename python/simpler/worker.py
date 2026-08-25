@@ -2374,36 +2374,62 @@ class _L2GlobalDomainStore:
     domains: dict[int, _L2GlobalDomain] = field(default_factory=dict)
 
 
-def _handle_ctrl_region_allocate(buf: memoryview, store: ProviderRegionStore) -> None:
+def _cleanup_ctrl_region_mappings(
+    buffers: tuple[memoryview | None, memoryview | None],
+    mappings: tuple[Any | None, Any | None],
+    *,
+    preserve_primary: bool,
+) -> None:
+    failures: list[tuple[str, BaseException]] = []
+    for label, view in zip(("request view", "reply view"), buffers):
+        if view is None:
+            continue
+        try:
+            view.release()
+        except BaseException as exc:  # noqa: BLE001
+            failures.append((label, exc))
+    for label, shm in zip(("request mapping", "reply mapping"), mappings):
+        if shm is None:
+            continue
+        try:
+            shm.close()
+        except BaseException as exc:  # noqa: BLE001
+            failures.append((label, exc))
+    if not failures:
+        return
+    if preserve_primary:
+        logger = logging.getLogger("simpler")
+        for label, exc in failures:
+            logger.warning("provider control %s cleanup failed while preserving the operation error: %s", label, exc)
+        return
+    raise failures[0][1]
+
+
+def _handle_ctrl_region_request(buf: memoryview, store: ProviderRegionStore, handler: Any) -> None:
     request_shm_name = _read_shm_name(buf, _OFF_ARGS)
     reply_shm_name = _read_shm_name(buf, _OFF_ARGS + _CTRL_SHM_NAME_BYTES)
-    req_shm = SharedMemory(name=request_shm_name)
-    reply_shm = SharedMemory(name=reply_shm_name)
-    req_buf = cast(memoryview, req_shm.buf)
-    reply_buf = cast(memoryview, reply_shm.buf)
+    req_shm = None
+    reply_shm = None
+    req_buf = None
+    reply_buf = None
     try:
-        handle_ctrl_region_allocate(req_buf, reply_buf, store)
-    finally:
-        del req_buf
-        del reply_buf
-        req_shm.close()
-        reply_shm.close()
+        req_shm = SharedMemory(name=request_shm_name)
+        reply_shm = SharedMemory(name=reply_shm_name)
+        req_buf = memoryview(cast(memoryview, req_shm.buf))
+        reply_buf = memoryview(cast(memoryview, reply_shm.buf))
+        handler(req_buf, reply_buf, store)
+    except BaseException:
+        _cleanup_ctrl_region_mappings((req_buf, reply_buf), (req_shm, reply_shm), preserve_primary=True)
+        raise
+    _cleanup_ctrl_region_mappings((req_buf, reply_buf), (req_shm, reply_shm), preserve_primary=False)
+
+
+def _handle_ctrl_region_allocate(buf: memoryview, store: ProviderRegionStore) -> None:
+    _handle_ctrl_region_request(buf, store, handle_ctrl_region_allocate)
 
 
 def _handle_ctrl_region_release(buf: memoryview, store: ProviderRegionStore) -> None:
-    request_shm_name = _read_shm_name(buf, _OFF_ARGS)
-    reply_shm_name = _read_shm_name(buf, _OFF_ARGS + _CTRL_SHM_NAME_BYTES)
-    req_shm = SharedMemory(name=request_shm_name)
-    reply_shm = SharedMemory(name=reply_shm_name)
-    req_buf = cast(memoryview, req_shm.buf)
-    reply_buf = cast(memoryview, reply_shm.buf)
-    try:
-        handle_ctrl_region_release(req_buf, reply_buf, store)
-    finally:
-        del req_buf
-        del reply_buf
-        req_shm.close()
-        reply_shm.close()
+    _handle_ctrl_region_request(buf, store, handle_ctrl_region_release)
 
 
 def _open_global_domain_payload(buf: memoryview) -> tuple[SharedMemory, memoryview, int]:

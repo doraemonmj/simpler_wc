@@ -44,12 +44,15 @@ from simpler.comm_provider import (
 from simpler.comm_provider_control import (
     ALLOCATE_REPLY_BYTES,
     ALLOCATE_REQUEST_BYTES,
+    RELEASE_REPLY_BYTES,
+    RELEASE_REQUEST_BYTES,
     AllocateReplyTag,
     decode_allocate_reply,
     decode_allocate_request,
     decode_release_request,
     encode_allocate_request,
     encode_allocate_success_reply,
+    encode_release_request,
     encode_release_result_reply,
 )
 from simpler.orchestrator import Orchestrator
@@ -69,6 +72,8 @@ from simpler.worker_chip_orch_comm import (
 )
 
 from simpler_setup.runtime_builder import RuntimeBuilder
+
+pytestmark = pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
 
 _task_interface_ext = cast(Any, importlib.import_module("_task_interface"))
 _TASK_INTERFACE_CPP = Path(__file__).resolve().parents[4] / "python" / "bindings" / "task_interface.cpp"
@@ -1227,6 +1232,85 @@ def test_region_allocate_handler_writes_request_error_for_bad_magic():
         req_shm.unlink()
         reply_shm.close()
         reply_shm.unlink()
+
+
+@pytest.mark.parametrize(
+    ("wrapper_name", "request_bytes", "reply_bytes", "store_method"),
+    [
+        ("_handle_ctrl_region_allocate", ALLOCATE_REQUEST_BYTES, ALLOCATE_REPLY_BYTES, "allocate_and_export"),
+        ("_handle_ctrl_region_release", RELEASE_REQUEST_BYTES, RELEASE_REPLY_BYTES, "release"),
+    ],
+)
+def test_region_handler_preserves_provider_error_with_derived_wire_views(
+    wrapper_name, request_bytes, reply_bytes, store_method
+):
+    from tests.ut.py.test_worker.test_comm_provider import _allocation_spec
+
+    req_shm = SharedMemory(create=True, size=request_bytes + 1)
+    reply_shm = SharedMemory(create=True, size=reply_bytes + 1)
+    req_buf = cast(memoryview, req_shm.buf)
+    reply_buf = cast(memoryview, reply_shm.buf)
+    ctrl_storage = bytearray(worker_module._OFF_ARGS + 2 * worker_module._CTRL_SHM_NAME_BYTES)
+    ctrl_buf = memoryview(ctrl_storage)
+    store = MagicMock(spec=ProviderRegionStore)
+    getattr(store, store_method).side_effect = ValueError("primary provider failure")
+    try:
+        if wrapper_name == "_handle_ctrl_region_allocate":
+            encode_allocate_request(req_buf, _allocation_spec())
+        else:
+            encode_release_request(req_buf, 7)
+        _write_ctrl_shm_name(ctrl_buf, worker_module._OFF_ARGS, req_shm.name)
+        _write_ctrl_shm_name(ctrl_buf, worker_module._OFF_ARGS + worker_module._CTRL_SHM_NAME_BYTES, reply_shm.name)
+
+        with pytest.raises(ValueError, match="primary provider failure"):
+            getattr(worker_module, wrapper_name)(ctrl_buf, store)
+    finally:
+        ctrl_buf.release()
+        req_buf.release()
+        reply_buf.release()
+        req_shm.close()
+        req_shm.unlink()
+        reply_shm.close()
+        reply_shm.unlink()
+
+
+@pytest.mark.parametrize(
+    ("wrapper_name", "handler_name"),
+    [
+        ("_handle_ctrl_region_allocate", "handle_ctrl_region_allocate"),
+        ("_handle_ctrl_region_release", "handle_ctrl_region_release"),
+    ],
+)
+def test_region_handler_primary_error_wins_and_both_mappings_close(monkeypatch, wrapper_name, handler_name):
+    class FailingCloseShm:
+        def __init__(self):
+            self.buf = memoryview(bytearray(ALLOCATE_REPLY_BYTES))
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+            raise BufferError("secondary cleanup failure")
+
+    mappings = [FailingCloseShm(), FailingCloseShm()]
+    remaining = iter(mappings)
+    monkeypatch.setattr(worker_module, "SharedMemory", lambda *, name: next(remaining))
+
+    def fail_with_primary(*_args):
+        raise ValueError("primary provider failure")
+
+    monkeypatch.setattr(worker_module, handler_name, fail_with_primary)
+    ctrl_storage = bytearray(worker_module._OFF_ARGS + 2 * worker_module._CTRL_SHM_NAME_BYTES)
+    ctrl_buf = memoryview(ctrl_storage)
+    try:
+        _write_ctrl_shm_name(ctrl_buf, worker_module._OFF_ARGS, "request")
+        _write_ctrl_shm_name(ctrl_buf, worker_module._OFF_ARGS + worker_module._CTRL_SHM_NAME_BYTES, "reply")
+
+        with pytest.raises(ValueError, match="primary provider failure"):
+            getattr(worker_module, wrapper_name)(ctrl_buf, MagicMock(spec=ProviderRegionStore))
+    finally:
+        ctrl_buf.release()
+
+    assert [mapping.close_calls for mapping in mappings] == [1, 1]
 
 
 def test_worker_host_mapped_counter_wait_releases_gil_for_python_notifier():
