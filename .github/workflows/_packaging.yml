@@ -91,6 +91,13 @@ jobs:
       - name: Run packaging matrix
         run: |
           . .venv/bin/activate
+          if [[ -z "${CC:-}" && -z "${CXX:-}" ]]; then
+            # On standard macOS runners, unversioned gcc/g++ are Apple Clang
+            # driver aliases. Pin the platform-default paths for stable ccache keys.
+            CC="$(command -v gcc)"
+            CXX="$(command -v g++)"
+            export CC CXX
+          fi
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             export MACOSX_DEPLOYMENT_TARGET
             MACOSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion | cut -d. -f1,2)"
