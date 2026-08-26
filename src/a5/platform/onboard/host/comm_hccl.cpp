@@ -46,12 +46,8 @@
 #include "acl/acl.h"
 #include "hccl/hccl_comm.h"
 #include "hccl/hccl_types.h"
-#ifdef SIMPLER_ENABLE_PTO_SDMA_WORKSPACE
 #include "pto/comm/async/sdma/sdma_workspace_manager.hpp"
-#endif
-#ifdef SIMPLER_ENABLE_PTO_URMA_WORKSPACE
 #include "pto/comm/async/urma/urma_workspace_manager.hpp"
-#endif
 
 // Thin wrappers around the HCCL public APIs we use. Kept as a translation
 // layer in case we need to swap (e.g., InitConfig variant) later.
@@ -83,9 +79,7 @@ struct DomainAllocation {
     // can cycle repeatedly within one comm handle before any device reset, so
     // these are released explicitly at domain teardown rather than left to reset.
     std::vector<std::pair<void *, aclrtDrvMemHandle>> peer_windows;
-#ifdef SIMPLER_ENABLE_PTO_URMA_WORKSPACE
     std::unique_ptr<pto::comm::urma::UrmaWorkspaceManager> urma_workspace;
-#endif
     CommContext *device_ctx = nullptr;  // aclrtMalloc'd CommContext mirror
 };
 
@@ -104,12 +98,8 @@ struct CommHandle_ {
     bool owns_device_ctx = false;
     std::vector<CommContext *> derived_contexts;
     std::unordered_map<uint64_t, std::unique_ptr<DomainAllocation>> domain_allocations;
-#ifdef SIMPLER_ENABLE_PTO_SDMA_WORKSPACE
     std::unique_ptr<pto::comm::sdma::SdmaWorkspaceManager> sdma_workspace;
-#endif
-#ifdef SIMPLER_ENABLE_PTO_URMA_WORKSPACE
     std::unique_ptr<pto::comm::urma::UrmaWorkspaceManager> urma_workspace;
-#endif
 };
 
 // ============================================================================
@@ -736,7 +726,6 @@ static std::string domain_barrier_tag(uint64_t allocation_id, const char *phase)
 // first call allocates.  Requires CANN to expose working
 // aclnnShmemSdmaStarsQuery primitives.
 static void ensure_sdma_workspace(CommHandle h) {
-#ifdef SIMPLER_ENABLE_PTO_SDMA_WORKSPACE
     if (h->sdma_workspace) return;
     h->sdma_workspace = std::make_unique<pto::comm::sdma::SdmaWorkspaceManager>();
     if (h->sdma_workspace->Init()) {
@@ -750,9 +739,6 @@ static void ensure_sdma_workspace(CommHandle h) {
         // The system gracefully degrades to non-SDMA mode when this occurs.
         h->sdma_workspace.reset();
     }
-#else
-    (void)h;
-#endif
 }
 
 // Callable-declared workspace injection is not available on a5 yet. Its URMA
@@ -776,7 +762,6 @@ extern "C" int dma_workspace_provision(uint32_t required_mask, uint64_t *addr_ou
 
 extern "C" void dma_workspace_release(void *handle) { (void)handle; }
 
-#ifdef SIMPLER_ENABLE_PTO_URMA_WORKSPACE
 static uint64_t urma_workspace_bytes(uint32_t rank_count) {
     using namespace pto::comm::urma;
     constexpr uint32_t qp_num = 1;
@@ -829,23 +814,10 @@ static bool ensure_base_urma_workspace(CommHandle h) {
     h->host_ctx.urmaWorkSpaceSize = urma_workspace_bytes(static_cast<uint32_t>(h->nranks));
     return h->host_ctx.urmaWorkSpace != 0 && h->host_ctx.urmaWorkSpaceSize != 0;
 }
-#endif
 
-static void reset_domain_urma_workspace(DomainAllocation &alloc) {
-#ifdef SIMPLER_ENABLE_PTO_URMA_WORKSPACE
-    alloc.urma_workspace.reset();
-#else
-    (void)alloc;
-#endif
-}
+static void reset_domain_urma_workspace(DomainAllocation &alloc) { alloc.urma_workspace.reset(); }
 
-static void reset_base_urma_workspace(CommHandle h) {
-#ifdef SIMPLER_ENABLE_PTO_URMA_WORKSPACE
-    h->urma_workspace.reset();
-#else
-    (void)h;
-#endif
-}
+static void reset_base_urma_workspace(CommHandle h) { h->urma_workspace.reset(); }
 
 // Performs the per-allocation Path-D dance for one subset rank.  rank_ids
 // must list participating BASE-COMM rank ids in domain rank order; this
@@ -1035,30 +1007,22 @@ static int domain_alloc_via_ipc(
 
     uint64_t domain_sdma_workspace_addr = 0;
     uint64_t domain_sdma_workspace_size = 0;
-#ifdef SIMPLER_ENABLE_PTO_SDMA_WORKSPACE
     if (h->sdma_workspace) {
         domain_sdma_workspace_addr = reinterpret_cast<uint64_t>(h->sdma_workspace->GetWorkspaceAddr());
         domain_sdma_workspace_size = 16 * 1024;
     }
-#endif
     uint64_t domain_urma_workspace_addr = 0;
     uint64_t domain_urma_workspace_size = 0;
-#ifdef SIMPLER_ENABLE_PTO_URMA_WORKSPACE
-    if (rank_ids_are_dense_prefix(rank_ids, rank_count)) {
-        if (!init_urma_workspace(
-                h, domain_rank, static_cast<uint32_t>(rank_count), localBuf, aligned_size, out->urma_workspace
-            )) {
-            reset_domain_urma_workspace(*out);
-            release_domain_peer_windows(*out);
-            release_own_vmm_window(localBuf, handle);
-            return -1;
-        }
-        domain_urma_workspace_addr = reinterpret_cast<uint64_t>(out->urma_workspace->GetWorkspaceAddr());
-        domain_urma_workspace_size = urma_workspace_bytes(static_cast<uint32_t>(rank_count));
-    } else {
-        LOG_WARN("[comm rank %d] alloc_domain: URMA workspace disabled for non-dense rank mapping", h->rank);
+    if (!init_urma_workspace(
+            h, domain_rank, static_cast<uint32_t>(rank_count), localBuf, aligned_size, out->urma_workspace
+        )) {
+        reset_domain_urma_workspace(*out);
+        release_domain_peer_windows(*out);
+        release_own_vmm_window(localBuf, handle);
+        return -1;
     }
-#endif
+    domain_urma_workspace_addr = reinterpret_cast<uint64_t>(out->urma_workspace->GetWorkspaceAddr());
+    domain_urma_workspace_size = urma_workspace_bytes(static_cast<uint32_t>(rank_count));
 
     CommContext ctx{};
     ctx.rankId = domain_rank;
@@ -1172,10 +1136,8 @@ extern "C" int comm_alloc_windows(CommHandle h, size_t win_size, uint64_t *devic
     // Both PTO-ISA async transport workspaces are materialized before the
     // CommContext is uploaded.
     ensure_sdma_workspace(h);
-#ifdef SIMPLER_ENABLE_PTO_URMA_WORKSPACE
     if (!ensure_base_urma_workspace(h)) return -1;
     if (!file_barrier(h->rootinfo_path, h->rank, h->nranks, "base_urma_ready", h->run_token)) return -1;
-#endif
 
     void *newDevMem = nullptr;
     aclError aRet = aclrtMalloc(&newDevMem, sizeof(CommContext), ACL_MEM_MALLOC_HUGE_FIRST);
@@ -1225,6 +1187,12 @@ extern "C" int comm_derive_context(
         );
         return -1;
     }
+    if (!rank_ids_are_dense_prefix(rank_ids, rank_count)) {
+        LOG_ERROR(
+            "[comm rank %d] comm_derive_context: A5 URMA requires dense-prefix rank_ids [0, %zu)", h->rank, rank_count
+        );
+        return -1;
+    }
     if (window_offset + window_size > static_cast<size_t>(h->host_ctx.winSize)) {
         LOG_ERROR(
             "[comm rank %d] comm_derive_context: window range [%zu, %zu) exceeds base window size %llu", h->rank,
@@ -1236,10 +1204,9 @@ extern "C" int comm_derive_context(
     CommContext ctx{};
     ctx.workSpace = h->host_ctx.workSpace;
     ctx.workSpaceSize = h->host_ctx.workSpaceSize;
-    if (rank_ids_are_dense_prefix(rank_ids, rank_count)) {
-        ctx.urmaWorkSpace = h->host_ctx.urmaWorkSpace;
-        ctx.urmaWorkSpaceSize = h->host_ctx.urmaWorkSpaceSize;
-    }
+    ctx.urmaWorkSpace = h->host_ctx.urmaWorkSpace;
+    ctx.urmaWorkSpaceSize = h->host_ctx.urmaWorkSpaceSize;
+    ctx.urmaWindowOffset = window_offset;
     ctx.rankId = domain_rank;
     ctx.rankNum = static_cast<uint32_t>(rank_count);
     ctx.winSize = window_size;
@@ -1305,6 +1272,10 @@ extern "C" int comm_alloc_domain_windows(
             "[comm rank %d] alloc_domain: bad args (rank_count=%zu domain_rank=%u window_size=%zu)", h->rank,
             rank_count, domain_rank, window_size
         );
+        return -1;
+    }
+    if (!rank_ids_are_dense_prefix(rank_ids, rank_count)) {
+        LOG_ERROR("[comm rank %d] alloc_domain: A5 URMA requires dense-prefix rank_ids [0, %zu)", h->rank, rank_count);
         return -1;
     }
     if (h->domain_allocations.count(allocation_id) > 0) {

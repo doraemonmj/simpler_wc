@@ -14,7 +14,8 @@ full comm lifecycle entirely through ChipWorker's public Python API:
 
     ChipWorker.init(device_id) → comm_init → comm_alloc_windows
     → comm_get_local_window_base → comm_get_window_size
-    → copy_from (reads back CommContext) → comm_barrier (known-issue tolerant)
+    → copy_from (reads back CommContext) → derive a non-zero-offset context
+    → comm_barrier (known-issue tolerant)
     → comm_destroy → finalize
 
 ACL bring-up and aclrtStream lifetime are owned internally by
@@ -66,10 +67,38 @@ class _CommContext(ctypes.Structure):
         ("windowsOut", ctypes.c_uint64 * _COMM_MAX_RANK_NUM),
         ("urmaWorkSpace", ctypes.c_uint64),
         ("urmaWorkSpaceSize", ctypes.c_uint64),
+        ("urmaWindowOffset", ctypes.c_uint64),
     ]
 
 
-assert ctypes.sizeof(_CommContext) == 1072, "CommContext python mirror drifted from C++ header"
+assert ctypes.sizeof(_CommContext) == 1080, "CommContext python mirror drifted from C++ header"
+
+
+def _check_derived_context(worker, comm, host_ctx, rank: int, nranks: int, platform: str) -> int:
+    """Validate A5 URMA view translation and visible rank-map rejection."""
+    derived_offset = 256
+    derived_size = 1024
+    derived_ctx_ptr = worker.comm_derive_context(comm, list(range(nranks)), rank, derived_offset, derived_size)
+    derived_ctx = _CommContext()
+    worker.copy_from(ctypes.addressof(derived_ctx), derived_ctx_ptr, ctypes.sizeof(derived_ctx))
+    for peer in range(nranks):
+        expected = int(host_ctx.windowsIn[peer]) + derived_offset
+        if derived_ctx.windowsIn[peer] != expected:
+            raise AssertionError(
+                f"derived windowsIn[{peer}]=0x{derived_ctx.windowsIn[peer]:x}, expected 0x{expected:x}"
+            )
+    if platform != "a5":
+        return int(derived_ctx.urmaWindowOffset)
+    if derived_ctx.urmaWorkSpace != host_ctx.urmaWorkSpace:
+        raise AssertionError("derived context did not inherit the base URMA workspace")
+    if derived_ctx.urmaWindowOffset != derived_offset:
+        raise AssertionError(f"urmaWindowOffset={derived_ctx.urmaWindowOffset}, expected {derived_offset}")
+
+    # A5 cannot currently remap URMA's communicator-indexed metadata. The host
+    # must reject this visibly instead of returning a null-workspace context.
+    with pytest.raises(RuntimeError):
+        worker.comm_derive_context(comm, [1, 0], 1 - rank, 0, derived_size)
+    return int(derived_ctx.urmaWindowOffset)
 
 
 def _rank_entry(
@@ -77,6 +106,7 @@ def _rank_entry(
     nranks: int,
     device_id: int,
     bins,
+    platform: str,
     rootinfo_path: str,
     result_queue: mp.Queue,  # type: ignore[type-arg]
 ) -> None:
@@ -141,6 +171,11 @@ def _rank_entry(
         result["sdma_workspace"] = int(host_ctx.workSpace)
         result["urma_workspace"] = int(host_ctx.urmaWorkSpace)
 
+        # A derived context shifts its visible windows while URMA remains
+        # registered against the base symmetric window. The explicit offset
+        # lets the kernel translate a domain-local offset back into that MR.
+        result["derived_urma_window_offset"] = _check_derived_context(worker, comm, host_ctx, rank, nranks, platform)
+
         # Barrier.  The C++ HCCL UT observed CANN error 507018 here on some
         # builds; that bug is tracked independently.  Surface the failure to
         # the parent as a warning and continue with teardown so the
@@ -193,6 +228,7 @@ def test_two_rank_comm_lifecycle(st_platform, st_device_ids):
                 nranks,
                 int(st_device_ids[rank]),
                 bins,
+                st_platform,
                 rootinfo_path,
                 result_queue,
             ),
@@ -225,6 +261,7 @@ def test_two_rank_comm_lifecycle(st_platform, st_device_ids):
         if st_platform == "a5":
             assert r["sdma_workspace"] != 0, f"rank {rank} has no SDMA workspace"
             assert r["urma_workspace"] != 0, f"rank {rank} has no URMA workspace"
+            assert r["derived_urma_window_offset"] == 256
 
     # Each rank's own-slot invariant (windowsIn[rank] == local_base) is
     # asserted inside _rank_entry; all peer slots are already checked to be

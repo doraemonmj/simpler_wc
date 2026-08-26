@@ -36,6 +36,11 @@ domain. `CommContext` keeps the SDMA workspace in the original `workSpace`
 pair and the URMA workspace in the appended `urmaWorkSpace` pair, so both
 engines are usable from the same build and domain.
 
+URMA metadata currently follows communicator-rank order. A5 therefore accepts
+dense-prefix domain mappings such as `[0, 1]`; unsupported mappings fail during
+host-side domain allocation rather than launching a kernel with a null URMA
+workspace.
+
 The test has only the ordinary scene constraints:
 
 | Gate | Effect |

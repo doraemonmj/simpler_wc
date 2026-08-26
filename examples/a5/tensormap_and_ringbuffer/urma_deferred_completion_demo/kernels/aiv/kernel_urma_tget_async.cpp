@@ -59,8 +59,9 @@ extern "C" __aicore__ __attribute__((always_inline)) void kernel_entry(__gm__ in
     __gm__ float *local_out = tensor_data<float>(out_tensor);
     uint32_t peer_rank = 1u - comm_ctx->rankId;
     uint64_t input_offset = reinterpret_cast<uint64_t>(local_input) - comm_ctx->windowsIn[comm_ctx->rankId];
+    uint64_t registered_input_offset = comm_ctx->urmaWindowOffset + input_offset;
     __gm__ float *remote_input = pto2::urma_backend::peer_mr_ptr<float>(
-        reinterpret_cast<__gm__ uint8_t *>(comm_ctx->urmaWorkSpace), peer_rank, input_offset
+        reinterpret_cast<__gm__ uint8_t *>(comm_ctx->urmaWorkSpace), peer_rank, registered_input_offset
     );
 
     using FlatShape = Shape<1, 1, 1, 1, kElems>;

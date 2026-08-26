@@ -191,6 +191,11 @@ int comm_get_window_size(CommHandle h, size_t *size_out);
  * device_ctx_out points to a backend-owned device CommContext that remains
  * valid until comm_destroy(base).
  *
+ * The A5 backend currently requires rank_ids to be the dense prefix
+ * [0, rank_count) because its URMA workspace is indexed in communicator-rank
+ * order. Unsupported mappings fail on the host; they never produce a context
+ * with a silently disabled transport.
+ *
  * @param h                Allocated base communicator handle.
  * @param rank_ids         Base-communicator rank ids in domain rank order.
  * @param rank_count       Number of domain ranks.
@@ -214,6 +219,8 @@ int comm_derive_context(
  * allocations are disambiguated by `allocation_id`, which is mixed into
  * every internal handshake / barrier filename so a second allocation
  * does not collide with the first.
+ * The A5 backend currently accepts only dense-prefix rank mappings for the
+ * same URMA indexing reason documented on comm_derive_context().
  *
  * This is a collective operation across the subset only: every
  * participating chip must call this with matching arguments; non-members

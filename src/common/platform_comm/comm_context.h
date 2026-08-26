@@ -33,6 +33,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
 static constexpr uint32_t COMM_MAX_RANK_NUM = 64;
 
@@ -48,6 +49,9 @@ struct CommContext {
 
     uint64_t urmaWorkSpace;
     uint64_t urmaWorkSpaceSize;
+    // Byte displacement of this context's windowsIn[] view from the symmetric
+    // memory registered in urmaWorkSpace. Zero for base and dynamic domains.
+    uint64_t urmaWindowOffset;
 };
 
 // The struct itself lives in this repo, so on the surface these asserts look
@@ -69,7 +73,9 @@ struct CommContext {
 // Treat the numbers below as a tripwire: changing them is a deliberate act
 // that forces the editor to coordinate the matching change on the pto-isa
 // side, not a routine "oh I just added a field" edit.
-static_assert(sizeof(CommContext) == 1072, "CommContext size shifted");
+static_assert(std::is_trivially_copyable_v<CommContext>, "CommContext must remain trivially copyable");
+static_assert(std::is_standard_layout_v<CommContext>, "CommContext must remain standard layout");
+static_assert(sizeof(CommContext) == 1080, "CommContext size shifted");
 static_assert(offsetof(CommContext, workSpace) == 0, "CommContext layout drift");
 static_assert(offsetof(CommContext, workSpaceSize) == 8, "CommContext layout drift");
 static_assert(offsetof(CommContext, rankId) == 16, "CommContext layout drift");
@@ -79,3 +85,4 @@ static_assert(offsetof(CommContext, windowsIn) == 32, "CommContext layout drift"
 static_assert(offsetof(CommContext, windowsOut) == 544, "CommContext layout drift");
 static_assert(offsetof(CommContext, urmaWorkSpace) == 1056, "CommContext layout drift");
 static_assert(offsetof(CommContext, urmaWorkSpaceSize) == 1064, "CommContext layout drift");
+static_assert(offsetof(CommContext, urmaWindowOffset) == 1072, "CommContext layout drift");
