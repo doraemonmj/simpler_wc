@@ -221,7 +221,7 @@ values yield `SIMPLER_ERROR_ASYNC_COMPLETION_INVALID`.
 | ------ | ---- | -- | ------ |
 | COUNTER (default) | registered | registered | **Shipped** — `tests/st/worker/comm_domain/async_notify` runs onboard on both architectures; `tests/st/worker/comm_domain/deferred_notify` runs in sim on both and onboard on a2a3, through the `st-onboard-*` / `st-sim-*` jobs in `ci.yml`. Routed by `CASES[*]["platforms"]`, no `skipif` |
 | SDMA | build macro forced ON; runtime opt-in | built and provisioned with communication contexts | a2a3 **Shipped** (the "SDMA pytest (a2a3)" step in `ci.yml`); a5 demo runs in the ordinary A5 sweep |
-| URMA | absent | built and provisioned with communication contexts | A5-only; exercised by `urma_deferred_completion_demo` without a build or environment gate |
+| URMA | absent | built and provisioned with dense-prefix communication contexts | A5-only; exercised by `urma_deferred_completion_demo` without a build or environment gate |
 | ROCE, CCU | enum only | enum only | **Name only** |
 
 **a2a3 SDMA is opt-in at runtime**, not "always on": the provider is always
@@ -242,14 +242,20 @@ submits `TGET_ASYNC`/`TPUT_ASYNC<DmaEngine::URMA>` with 256 MB chunking. The
 pinned PTO-ISA defines `PTO_URMA_SUPPORTED` for DAV_3510. The host provisions
 the process-global SDMA workspace and the domain-scoped URMA workspace before
 uploading `CommContext`; the original `workSpace` pair remains the SDMA ABI,
-and the appended `urmaWorkSpace` pair carries URMA. Engine-specific kernels
-therefore run from the same default build without an environment selector.
+and the appended `urmaWorkSpace` pair carries URMA. A derived context also
+carries `urmaWindowOffset`, translating its domain-local window offsets back
+to the registered base MR. URMA metadata is indexed by communicator rank, so
+A5 currently rejects non-dense-prefix rank mappings on the host instead of
+returning a context with URMA silently disabled. Engine-specific kernels run
+from the same default build without an environment selector.
 
-**HCCL is bootstrap, not data movement.** The complete set of functions called
-is `HcclGetRootInfo`, `HcclCommInitRootInfo`, `HcclBarrier`, `HcclCommDestroy`.
-There is no `HcclAllReduce` / `AllGather` / `Send` / `Recv` anywhere; every
-shipped collective is a hand-written AIV kernel that computes a peer pointer
-from the symmetric window
+**HCCL is control-plane setup, not collective data movement.** Communicator
+lifecycle uses `HcclGetRootInfo`, `HcclCommInitRootInfo`, `HcclBarrier`, and
+`HcclCommDestroy`; A5 URMA setup additionally uses `HcclCommMemReg`,
+`HcclRankGraphGetLinks`, and `HcclChannelAcquire` to register memory and create
+transport channels. There is no `HcclAllReduce` / `AllGather` / `Send` / `Recv`
+in the collective data path; every shipped collective is a hand-written AIV
+kernel that computes a peer pointer from the symmetric window
 (`tests/st/worker/collectives/allreduce/kernels/aiv/allreduce_ring_kernel.cpp:59-61`).
 
 **Fabric is undocumented.** a2a3 prefers `alloc_windows_via_fabric()` with
@@ -271,8 +277,9 @@ Unresolved after this survey, in rough order of how much they block:
 1. **What are `ASYNC_ENGINE_ROCE` and `ASYNC_ENGINE_CCU` for?** No design doc,
    investigation entry, or code comment says whether they are reserved slots or
    leftovers from a dropped design.
-2. **Has a5 URMA ever run on silicon?** No CI run, test artifact, or
-   investigation attests to it.
+2. **How broad is a5 URMA coverage?** The two-rank deferred-completion demo has
+   passed bring-up on A5 and is selected by the ordinary A5 sweep after this
+   change, but there is no retained multi-topology or long-running artifact.
 3. **Which CANN mitigation closed issue #822, and is Path B usable on CANN
    9.0.0?** The doc says "CANN-side mitigation landed" without naming it, and
    nobody re-ran the repro.

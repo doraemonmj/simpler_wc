@@ -119,11 +119,6 @@ target_compile_options(host_runtime
 # src/common/platform/shared/host/platform_compile_info.cpp.
 target_compile_definitions(host_runtime PRIVATE SIMPLER_PLATFORM_NAME="a5")
 
-target_compile_definitions(host_runtime PRIVATE
-    SIMPLER_ENABLE_PTO_SDMA_WORKSPACE=1
-    SIMPLER_ENABLE_PTO_URMA_WORKSPACE=1
-)
-
 # Bake the resolved pto-isa commit into the compile command because the
 # async-workspace backends embed pto-isa headers into this .so. A
 # pto-isa pin bump leaves runtime HEAD
