@@ -40,11 +40,14 @@ URMA metadata follows communicator-rank order, while each derived context
 carries an explicit domain-rank-to-communicator-rank map. Subsets and reordered
 domains therefore use the same communicator-scoped registration safely.
 
-The A5 worker registers one 200 MiB per-rank arena for the communicator and
-carves ordinary dynamic domains from it. The first 256 bytes are reserved, so
-this demo's normal `allocate_domain` path performs a real URMA TGET through a
-non-zero derived offset. Releasing a domain frees its context and returns its
-slice; the HCCL registration and channels live until communicator teardown.
+The A5 worker registers one backend-sized per-rank arena for the communicator
+(currently 200 MiB) and carves ordinary dynamic domains from it. The first 256
+bytes are reserved, so this demo's normal `allocate_domain` path performs a
+real URMA TGET through a non-zero derived offset. Its domain worker order is
+also reversed to `[1, 0]`, covering domain-rank-to-communicator-rank remapping,
+peer MR selection, and `UrmaTget` in one transfer. Releasing a domain frees its
+context and returns its slice; the HCCL registration and channels live until
+communicator teardown.
 
 The test has only the ordinary scene constraints:
 

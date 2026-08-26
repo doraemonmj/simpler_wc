@@ -31,7 +31,9 @@ def urma_deferred_completion_orch_fn(orch, callables, task_args, config):
     input_nbytes = N * DTYPE_NBYTES
     with orch.allocate_domain(
         name="urma_deferred_completion",
-        workers=list(range(NRANKS)),
+        # Reverse the domain order so the real TGET covers domain-rank to
+        # communicator-rank remapping rather than only checking its metadata.
+        workers=list(reversed(range(NRANKS))),
         window_size=max(URMA_DATA_OFFSET_NBYTES + input_nbytes, 4 * 1024 * 1024),
         buffers=[
             CommBufferSpec(
