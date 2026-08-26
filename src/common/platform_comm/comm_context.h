@@ -24,8 +24,9 @@
  *     layout is owned end-to-end by simpler.
  *   - comm_sim.cpp: same shape, filled with malloc'd host pointers.
  *
- * The layout is shared with pto-isa's parallel HcclDeviceContext
- * declaration and must stay byte-equivalent with it.
+ * The leading layout through windowsOut is shared with pto-isa's parallel
+ * HcclDeviceContext declaration. Simpler-owned transport fields are appended
+ * after that compatible prefix.
  */
 
 #pragma once
@@ -44,6 +45,9 @@ struct CommContext {
     uint64_t winSize;
     uint64_t windowsIn[COMM_MAX_RANK_NUM];
     uint64_t windowsOut[COMM_MAX_RANK_NUM];
+
+    uint64_t urmaWorkSpace;
+    uint64_t urmaWorkSpaceSize;
 };
 
 // The struct itself lives in this repo, so on the surface these asserts look
@@ -52,11 +56,11 @@ struct CommContext {
 // this header at the same time:
 //
 //   1. The pto-isa repo carries a parallel declaration (HcclDeviceContext)
-//      that must be byte-equivalent to this struct -- pto-isa kernels read
-//      windowsIn[]/winSize/rankId via that mirror. Any insert/reorder here
-//      that is not matched in pto-isa silently shifts the device-side field
-//      offsets and corrupts MTE2 reads. The locks below pin our side; the
-//      pto-isa side should add its own mirror asserts.
+//      that must be prefix-compatible with this struct -- pto-isa kernels read
+//      windowsIn[]/winSize/rankId via that mirror. Any insert/reorder before
+//      the simpler-owned tail that is not matched in pto-isa silently shifts
+//      the device-side field offsets and corrupts MTE2 reads. The locks below
+//      pin our side; pto-isa should add its own mirror asserts.
 //
 //   2. Device kernels (AICore / AICPU) compiled with CCEC may apply slightly
 //      different alignment rules than host gcc. A host-side sizeof/offset
@@ -65,7 +69,7 @@ struct CommContext {
 // Treat the numbers below as a tripwire: changing them is a deliberate act
 // that forces the editor to coordinate the matching change on the pto-isa
 // side, not a routine "oh I just added a field" edit.
-static_assert(sizeof(CommContext) == 1056, "CommContext size shifted");
+static_assert(sizeof(CommContext) == 1072, "CommContext size shifted");
 static_assert(offsetof(CommContext, workSpace) == 0, "CommContext layout drift");
 static_assert(offsetof(CommContext, workSpaceSize) == 8, "CommContext layout drift");
 static_assert(offsetof(CommContext, rankId) == 16, "CommContext layout drift");
@@ -73,3 +77,5 @@ static_assert(offsetof(CommContext, rankNum) == 20, "CommContext layout drift");
 static_assert(offsetof(CommContext, winSize) == 24, "CommContext layout drift");
 static_assert(offsetof(CommContext, windowsIn) == 32, "CommContext layout drift");
 static_assert(offsetof(CommContext, windowsOut) == 544, "CommContext layout drift");
+static_assert(offsetof(CommContext, urmaWorkSpace) == 1056, "CommContext layout drift");
+static_assert(offsetof(CommContext, urmaWorkSpaceSize) == 1064, "CommContext layout drift");

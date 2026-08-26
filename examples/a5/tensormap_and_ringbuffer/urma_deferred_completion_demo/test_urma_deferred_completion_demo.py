@@ -14,9 +14,6 @@ fetches the peer rank's input into local ``out`` and registers the URMA async
 event. The consumer depends on that output and writes ``result = out + 1``.
 """
 
-import os
-
-import pytest
 import torch
 from simpler.task_interface import ArgDirection as D
 from simpler.task_interface import CommBufferSpec, DataType, TaskArgs, TensorArgType
@@ -28,24 +25,9 @@ N = 128 * 128
 NRANKS = 2
 DTYPE_NBYTES = 4
 URMA_DATA_OFFSET_NBYTES = 64 * DTYPE_NBYTES
-_URMA_WORKSPACE_ENV = "SIMPLER_ENABLE_PTO_URMA_WORKSPACE"
-_WORKSPACE_TRUTHY = {"1", "ON", "TRUE", "YES"}
-
-
-def _urma_workspace_enabled():
-    return os.environ.get(_URMA_WORKSPACE_ENV, "").upper() in _WORKSPACE_TRUTHY
-
-
-def _require_urma_workspace_enabled():
-    if not _urma_workspace_enabled():
-        raise RuntimeError(
-            "urma_deferred_completion_demo requires host runtime built with "
-            f"{_URMA_WORKSPACE_ENV}=ON; set it before rebuilding simpler."
-        )
 
 
 def urma_deferred_completion_orch_fn(orch, callables, task_args, config):
-    _require_urma_workspace_enabled()
     input_nbytes = N * DTYPE_NBYTES
     with orch.allocate_domain(
         name="urma_deferred_completion",
@@ -78,11 +60,6 @@ def urma_deferred_completion_orch_fn(orch, callables, task_args, config):
             orch.submit_next_level(callables.urma_deferred_completion, args, config, worker=rank)
 
 
-@pytest.mark.skipif(
-    not _urma_workspace_enabled(),
-    reason="URMA workspace overlay not enabled (set SIMPLER_ENABLE_PTO_URMA_WORKSPACE=ON to run). "
-    "See docs/a5-sdma-overlay.md (#1315).",
-)
 @scene_test(level=3, runtime="tensormap_and_ringbuffer")
 class TestUrmaDeferredCompletionDemo(SceneTestCase):
     CALLABLE = {

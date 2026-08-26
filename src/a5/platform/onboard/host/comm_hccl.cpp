@@ -817,7 +817,7 @@ static bool init_urma_workspace(
 
 static bool ensure_base_urma_workspace(CommHandle h) {
     if (h == nullptr) return false;
-    if (h->urma_workspace) return h->host_ctx.workSpace != 0 && h->host_ctx.workSpaceSize != 0;
+    if (h->urma_workspace) return h->host_ctx.urmaWorkSpace != 0 && h->host_ctx.urmaWorkSpaceSize != 0;
     void *local_buf = reinterpret_cast<void *>(static_cast<uintptr_t>(h->host_ctx.windowsIn[h->rank]));
     if (!init_urma_workspace(
             h, static_cast<uint32_t>(h->rank), static_cast<uint32_t>(h->nranks), local_buf, h->host_ctx.winSize,
@@ -825,9 +825,9 @@ static bool ensure_base_urma_workspace(CommHandle h) {
         )) {
         return false;
     }
-    h->host_ctx.workSpace = reinterpret_cast<uint64_t>(h->urma_workspace->GetWorkspaceAddr());
-    h->host_ctx.workSpaceSize = urma_workspace_bytes(static_cast<uint32_t>(h->nranks));
-    return h->host_ctx.workSpace != 0 && h->host_ctx.workSpaceSize != 0;
+    h->host_ctx.urmaWorkSpace = reinterpret_cast<uint64_t>(h->urma_workspace->GetWorkspaceAddr());
+    h->host_ctx.urmaWorkSpaceSize = urma_workspace_bytes(static_cast<uint32_t>(h->nranks));
+    return h->host_ctx.urmaWorkSpace != 0 && h->host_ctx.urmaWorkSpaceSize != 0;
 }
 #endif
 
@@ -1033,14 +1033,16 @@ static int domain_alloc_via_ipc(
     // those kernels early-return on the workSpace guard.
     ensure_sdma_workspace(h);
 
-    uint64_t domain_workspace_addr = 0;
-    uint64_t domain_workspace_size = 0;
+    uint64_t domain_sdma_workspace_addr = 0;
+    uint64_t domain_sdma_workspace_size = 0;
 #ifdef SIMPLER_ENABLE_PTO_SDMA_WORKSPACE
     if (h->sdma_workspace) {
-        domain_workspace_addr = reinterpret_cast<uint64_t>(h->sdma_workspace->GetWorkspaceAddr());
-        domain_workspace_size = 16 * 1024;
+        domain_sdma_workspace_addr = reinterpret_cast<uint64_t>(h->sdma_workspace->GetWorkspaceAddr());
+        domain_sdma_workspace_size = 16 * 1024;
     }
 #endif
+    uint64_t domain_urma_workspace_addr = 0;
+    uint64_t domain_urma_workspace_size = 0;
 #ifdef SIMPLER_ENABLE_PTO_URMA_WORKSPACE
     if (rank_ids_are_dense_prefix(rank_ids, rank_count)) {
         if (!init_urma_workspace(
@@ -1051,8 +1053,8 @@ static int domain_alloc_via_ipc(
             release_own_vmm_window(localBuf, handle);
             return -1;
         }
-        domain_workspace_addr = reinterpret_cast<uint64_t>(out->urma_workspace->GetWorkspaceAddr());
-        domain_workspace_size = urma_workspace_bytes(static_cast<uint32_t>(rank_count));
+        domain_urma_workspace_addr = reinterpret_cast<uint64_t>(out->urma_workspace->GetWorkspaceAddr());
+        domain_urma_workspace_size = urma_workspace_bytes(static_cast<uint32_t>(rank_count));
     } else {
         LOG_WARN("[comm rank %d] alloc_domain: URMA workspace disabled for non-dense rank mapping", h->rank);
     }
@@ -1062,8 +1064,10 @@ static int domain_alloc_via_ipc(
     ctx.rankId = domain_rank;
     ctx.rankNum = static_cast<uint32_t>(subset_n);
     ctx.winSize = aligned_size;
-    ctx.workSpace = domain_workspace_addr;
-    ctx.workSpaceSize = domain_workspace_size;
+    ctx.workSpace = domain_sdma_workspace_addr;
+    ctx.workSpaceSize = domain_sdma_workspace_size;
+    ctx.urmaWorkSpace = domain_urma_workspace_addr;
+    ctx.urmaWorkSpaceSize = domain_urma_workspace_size;
     ctx.windowsIn[my_dr] = reinterpret_cast<uint64_t>(localBuf);
     // Import each peer's shareable handle onto our device; see the symmetry
     // note in alloc_windows_via_ipc (one win_size, shared chip granularity).
@@ -1165,8 +1169,8 @@ extern "C" int comm_alloc_windows(CommHandle h, size_t win_size, uint64_t *devic
     const uint64_t effective_win_size = win_size != 0 ? static_cast<uint64_t>(win_size) : kDefaultIpcWinSize;
     if (alloc_windows_via_ipc(h, effective_win_size) != 0) return -1;
 
-    // Optional PTO-ISA async SDMA workspace pre-allocation (overlays the comm
-    // backend's output; comm-side flow does not care about workSpace).
+    // Both PTO-ISA async transport workspaces are materialized before the
+    // CommContext is uploaded.
     ensure_sdma_workspace(h);
 #ifdef SIMPLER_ENABLE_PTO_URMA_WORKSPACE
     if (!ensure_base_urma_workspace(h)) return -1;
@@ -1232,6 +1236,10 @@ extern "C" int comm_derive_context(
     CommContext ctx{};
     ctx.workSpace = h->host_ctx.workSpace;
     ctx.workSpaceSize = h->host_ctx.workSpaceSize;
+    if (rank_ids_are_dense_prefix(rank_ids, rank_count)) {
+        ctx.urmaWorkSpace = h->host_ctx.urmaWorkSpace;
+        ctx.urmaWorkSpaceSize = h->host_ctx.urmaWorkSpaceSize;
+    }
     ctx.rankId = domain_rank;
     ctx.rankNum = static_cast<uint32_t>(rank_count);
     ctx.winSize = window_size;

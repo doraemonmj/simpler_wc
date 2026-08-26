@@ -220,8 +220,8 @@ values yield `SIMPLER_ERROR_ASYNC_COMPLETION_INVALID`.
 | Engine | a2a3 | a5 | Status |
 | ------ | ---- | -- | ------ |
 | COUNTER (default) | registered | registered | **Shipped** — `tests/st/worker/comm_domain/async_notify` runs onboard on both architectures; `tests/st/worker/comm_domain/deferred_notify` runs in sim on both and onboard on a2a3, through the `st-onboard-*` / `st-sim-*` jobs in `ci.yml`. Routed by `CASES[*]["platforms"]`, no `skipif` |
-| SDMA | build macro forced ON; runtime opt-in | `option(... OFF)` | a2a3 **Shipped** (the "SDMA pytest (a2a3)" step in `ci.yml`); a5 not built |
-| URMA | absent | full implementation | **Gated** — see below |
+| SDMA | build macro forced ON; runtime opt-in | built and provisioned with communication contexts | a2a3 **Shipped** (the "SDMA pytest (a2a3)" step in `ci.yml`); a5 demo runs in the ordinary A5 sweep |
+| URMA | absent | built and provisioned with communication contexts | A5-only; exercised by `urma_deferred_completion_demo` without a build or environment gate |
 | ROCE, CCU | enum only | enum only | **Name only** |
 
 **a2a3 SDMA is opt-in at runtime**, not "always on": the provider is always
@@ -235,17 +235,15 @@ without, traced to a single 300,000 ms remote TRS event timeout
 ([investigations/2026-07-a2a3-sdma-fault-teardown.md](investigations/2026-07-a2a3-sdma-fault-teardown.md),
 issue #1425).
 
-**a5 URMA is real code that cannot execute.** The scheduler walks `UrmaCqCtx`
+**a5 SDMA and URMA coexist in one communication context.** The scheduler walks `UrmaCqCtx`
 CQEs checking the owner bit, advances the tail and rings the doorbell
 (`src/a5/.../backend/urma/urma_completion_scheduler.h:133-215`); the kernel
-submits `TGET_ASYNC`/`TPUT_ASYNC<DmaEngine::URMA>` with 256 MB chunking. Both
-sit behind `PTO_URMA_SUPPORTED`, which is **defined nowhere in this repo and
-nowhere in the installed CANN pto headers**, so the `#else` branch returns
-`SIMPLER_ERROR_ASYNC_COMPLETION_INVALID` immediately. The host overlay macro is
-fully wired, so turning it on does not help — the device path stays unreachable.
-a5's SDMA and URMA overlays are mutually exclusive by CMake `FATAL_ERROR`
-because `CommContext` exposes a single `workSpace` pair
-(`src/a5/platform/onboard/host/CMakeLists.txt:49-53`).
+submits `TGET_ASYNC`/`TPUT_ASYNC<DmaEngine::URMA>` with 256 MB chunking. The
+pinned PTO-ISA defines `PTO_URMA_SUPPORTED` for DAV_3510. The host provisions
+the process-global SDMA workspace and the domain-scoped URMA workspace before
+uploading `CommContext`; the original `workSpace` pair remains the SDMA ABI,
+and the appended `urmaWorkSpace` pair carries URMA. Engine-specific kernels
+therefore run from the same default build without an environment selector.
 
 **HCCL is bootstrap, not data movement.** The complete set of functions called
 is `HcclGetRootInfo`, `HcclCommInitRootInfo`, `HcclBarrier`, `HcclCommDestroy`.
@@ -282,9 +280,7 @@ Unresolved after this survey, in rough order of how much they block:
    one-process-per-`(arch, runtime)` ChipWorker model rests on it, but it is
    asserted only from CANN source paths that are not vendored here and no
    in-repo probe detects it.
-5. **Where would `PTO_URMA_SUPPORTED` ever be defined?** Not in this repo, not
-   in the installed CANN pto headers.
-6. **Which platforms lack Fabric support?** Stated only as a code comment, never
+5. **Which platforms lack Fabric support?** Stated only as a code comment, never
    enumerated, and a5's divergence to the V1 handle route is undocumented.
 
 ## Documentation drift found while compiling this survey
