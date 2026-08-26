@@ -1729,7 +1729,7 @@ def generate_chrome_trace_json(  # noqa: PLR0912, PLR0913, PLR0915
             "dispatch": "terrible",  # red
             "async_poll": "yellow",  # async-wait completion polling (split from complete)
             "release": "olive",  # deferred-release drain (on_task_release work)
-            "dummy": "grey",  # dummy_drain pass (Resolve nests inside)
+            "dummy": "grey",  # dummy_drain pass (TMR Resolve nests inside; HBG P bar is standalone)
             "early_dispatch": "rail_animation",  # speculative early-dispatch staging
             # sync_start stop-the-world drain: outer bar time-contains the two
             # inner staging passes, so Perfetto nests them by depth on the track.
@@ -1737,7 +1737,7 @@ def generate_chrome_trace_json(  # noqa: PLR0912, PLR0913, PLR0915
             "drain_prepare": "cq_build_attempt_runnable",  # inner: cluster scan + build_payload
             "drain_publish": "cq_build_attempt_passed",  # inner: MMIO write_reg per subtask (the cohort launch)
             "graph_prepare": "rail_animation",  # bounded Scheduler-side Definition expansion
-            # Inner phase — nests inside Complete or Dummy via time containment
+            # Inner in TMR; standalone on HBG's dedicated P thread.
             "resolve": "vsync_highlight_color",  # on_task_complete: walk consumer list
             # Separate-lane (Worker View AICPU_N) — fallback color if it ever lands on Sched
             "dummy_task": "grey",

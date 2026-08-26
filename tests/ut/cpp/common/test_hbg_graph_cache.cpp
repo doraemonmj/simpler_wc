@@ -677,6 +677,7 @@ TEST(GraphExecutionProgress, InternalNodeResolutionIsNotAHostCompletion) {
     EXPECT_EQ(result.error_code, SIMPLER_ERROR_NONE);
     EXPECT_EQ(result.resolved, 1);
     EXPECT_EQ(result.completed, 0);
+    EXPECT_EQ(async_poll_tasks_processed(result), 1U);
 }
 
 // Device-side execution storage is not guaranteed to be zero-initialized.
