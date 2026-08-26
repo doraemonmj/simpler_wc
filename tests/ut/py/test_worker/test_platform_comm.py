@@ -68,14 +68,15 @@ class _CommContext(ctypes.Structure):
         ("urmaWorkSpace", ctypes.c_uint64),
         ("urmaWorkSpaceSize", ctypes.c_uint64),
         ("urmaWindowOffset", ctypes.c_uint64),
+        ("urmaRankMap", ctypes.c_uint32 * _COMM_MAX_RANK_NUM),
     ]
 
 
-assert ctypes.sizeof(_CommContext) == 1080, "CommContext python mirror drifted from C++ header"
+assert ctypes.sizeof(_CommContext) == 1336, "CommContext python mirror drifted from C++ header"
 
 
 def _check_derived_context(worker, comm, host_ctx, rank: int, nranks: int, platform: str) -> int:
-    """Validate A5 URMA view translation and visible rank-map rejection."""
+    """Validate A5 URMA view translation and communicator-rank remapping."""
     derived_offset = 256
     derived_size = 1024
     derived_ctx_ptr = worker.comm_derive_context(comm, list(range(nranks)), rank, derived_offset, derived_size)
@@ -93,11 +94,12 @@ def _check_derived_context(worker, comm, host_ctx, rank: int, nranks: int, platf
         raise AssertionError("derived context did not inherit the base URMA workspace")
     if derived_ctx.urmaWindowOffset != derived_offset:
         raise AssertionError(f"urmaWindowOffset={derived_ctx.urmaWindowOffset}, expected {derived_offset}")
-
-    # A5 cannot currently remap URMA's communicator-indexed metadata. The host
-    # must reject this visibly instead of returning a null-workspace context.
-    with pytest.raises(RuntimeError):
-        worker.comm_derive_context(comm, [1, 0], 1 - rank, 0, derived_size)
+    reversed_ranks = list(reversed(range(nranks)))
+    reversed_ctx_ptr = worker.comm_derive_context(comm, reversed_ranks, nranks - 1 - rank, derived_offset, derived_size)
+    reversed_ctx = _CommContext()
+    worker.copy_from(ctypes.addressof(reversed_ctx), reversed_ctx_ptr, ctypes.sizeof(reversed_ctx))
+    if list(reversed_ctx.urmaRankMap[:nranks]) != reversed_ranks:
+        raise AssertionError(f"urmaRankMap={list(reversed_ctx.urmaRankMap[:nranks])}, expected {reversed_ranks}")
     return int(derived_ctx.urmaWindowOffset)
 
 

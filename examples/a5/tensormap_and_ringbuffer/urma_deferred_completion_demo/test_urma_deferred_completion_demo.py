@@ -48,6 +48,8 @@ def urma_deferred_completion_orch_fn(orch, callables, task_args, config):
             orch.copy_to(handle[rank].buffers["input_window"], _rehosted_buffer_for(task_args, source))
         for rank in range(NRANKS):
             domain = handle[rank]
+            if domain.window_offset == 0:
+                raise AssertionError("URMA regression requires a non-zero derived arena offset")
             args = TaskArgs()
             args.add_tensor(domain.buffers["input_window"].tensor((N,), DataType.FLOAT32), TensorArgType.INPUT)
             args.add_tensor(

@@ -473,6 +473,7 @@ extern "C" int comm_derive_context(
         }
         ctx->windowsIn[i] = h->host_ctx.windowsIn[base_rank] + window_offset;
         ctx->windowsOut[i] = h->host_ctx.windowsOut[base_rank] + window_offset;
+        ctx->urmaRankMap[i] = base_rank;
     }
 
     h->derived_contexts.push_back(ctx);
@@ -529,8 +530,9 @@ extern "C" int comm_barrier(CommHandle h) {
 
 extern "C" int comm_alloc_domain_windows(
     CommHandle h, uint64_t allocation_id, const uint32_t *rank_ids, size_t rank_count, uint32_t domain_rank,
-    size_t window_size, uint64_t *device_ctx_out, uint64_t *local_window_base_out
+    size_t window_offset, size_t window_size, uint64_t *device_ctx_out, uint64_t *local_window_base_out
 ) try {
+    (void)window_offset;
     if (h == nullptr || rank_ids == nullptr || device_ctx_out == nullptr || local_window_base_out == nullptr) return -1;
     if (rank_count == 0 || rank_count > COMM_MAX_RANK_NUM || domain_rank >= rank_count || window_size == 0) {
         std::fprintf(

@@ -589,13 +589,20 @@ _PY_CALLABLE_HEADER = struct.Struct("<4sBBHQ")
 # uses only the first slot.
 _CTRL_SHM_NAME_BYTES = 32
 
-# Domain-allocation request shm layout: 32-byte header + buffer_nbytes (u64) +
+# Domain-allocation request shm layout: 40-byte header + buffer_nbytes (u64) +
 # rank_ids (u32).  Buffer specs first so they remain 8-byte aligned regardless
 # of rank_count parity; rank_ids come last (u32 has no alignment concern).
-_DOMAIN_REQ_HEADER = struct.Struct("<QIIQI4x")
+_DOMAIN_REQ_HEADER = struct.Struct("<QIIQQI4x")
 # fields: allocation_id (u64), rank_count (u32), domain_rank (u32),
-#         window_size (u64), buffer_count (u32), padding (4 bytes)
-assert _DOMAIN_REQ_HEADER.size == 32
+#         window_offset (u64), window_size (u64), buffer_count (u32), padding (4 bytes)
+assert _DOMAIN_REQ_HEADER.size == 40
+
+# A5 registers one communicator-lifetime arena with HCCL/URMA and carves
+# dynamic domains from it. Keep the first aligned unit unused so even the
+# first ordinary URMA scene exercises non-zero derived-window translation.
+_A5_COMM_ARENA_BYTES = 200 * 1024 * 1024
+_A5_COMM_ARENA_ALIGNMENT = 256
+_A5_COMM_ARENA_RESERVED = _A5_COMM_ARENA_ALIGNMENT
 
 # Domain-allocation reply shm layout: 32-byte header + buffer_ptrs (u64).
 _DOMAIN_REPLY_HEADER = struct.Struct("<QQQI4x")
@@ -2278,7 +2285,9 @@ def _handle_ctrl_alloc_domain(cw: ChipWorker, buf: memoryview) -> None:
     req_buf = req_shm.buf
     assert req_buf is not None
     try:
-        (allocation_id, rank_count, domain_rank, window_size, buffer_count) = _DOMAIN_REQ_HEADER.unpack_from(req_buf, 0)
+        (allocation_id, rank_count, domain_rank, window_offset, window_size, buffer_count) = (
+            _DOMAIN_REQ_HEADER.unpack_from(req_buf, 0)
+        )
         # Layout: header | buffer_nbytes[buffer_count] (u64) | rank_ids[rank_count] (u32)
         nbytes_offset = _DOMAIN_REQ_HEADER.size
         nbytes_struct = struct.Struct(f"<{buffer_count}Q") if buffer_count else struct.Struct("")
@@ -2304,6 +2313,7 @@ def _handle_ctrl_alloc_domain(cw: ChipWorker, buf: memoryview) -> None:
             int(allocation_id),
             rank_ids,
             int(domain_rank),
+            int(window_offset),
             int(window_size),
             _buffer_field_addr(reply_buf, _OFF_DOMAIN_REPLY_COMMITTED),
         )
@@ -2328,7 +2338,7 @@ def _handle_ctrl_alloc_domain(cw: ChipWorker, buf: memoryview) -> None:
         reply_shm.close()
 
 
-def _handle_ctrl_comm_init(cw: ChipWorker, buf: memoryview) -> None:
+def _handle_ctrl_comm_init(cw: ChipWorker, buf: memoryview, chip_platform: str) -> None:
     """CTRL_COMM_INIT handler — drives `cw.comm_init` on the chip child.
 
     Idempotent: ``ChipWorker.comm_init`` itself caches the handle and returns
@@ -2353,6 +2363,11 @@ def _handle_ctrl_comm_init(cw: ChipWorker, buf: memoryview) -> None:
     if handle == 0:
         raise RuntimeError("comm_init returned 0 handle for hidden base communicator")
     cw._comm_base_handle_cached = int(handle)
+    if chip_platform == "a5" and not getattr(cw, "_comm_base_windows_ready", False):
+        device_ctx = cw.comm_alloc_windows(int(handle), 0)
+        if device_ctx == 0:
+            raise RuntimeError("comm_alloc_windows returned 0 for the A5 persistent communication arena")
+        cw._comm_base_windows_ready = True
 
 
 @dataclass
@@ -2683,7 +2698,7 @@ def _handle_ctrl_release_domain(cw: ChipWorker, buf: memoryview) -> None:
     req_buf = req_shm.buf
     assert req_buf is not None
     try:
-        (allocation_id, rank_count, domain_rank, _ws, _bc) = _DOMAIN_REQ_HEADER.unpack_from(req_buf, 0)
+        (allocation_id, rank_count, domain_rank, _offset, _ws, _bc) = _DOMAIN_REQ_HEADER.unpack_from(req_buf, 0)
     finally:
         req_buf.release()
         req_shm.close()
@@ -2917,7 +2932,7 @@ def _run_chip_main_loop(  # noqa: PLR0913, PLR0915 -- fork-child entry: every de
             elif sub_cmd == _CTRL_RELEASE_DOMAIN:
                 _handle_ctrl_release_domain(cw, buf)
             elif sub_cmd == _CTRL_COMM_INIT:
-                _handle_ctrl_comm_init(cw, buf)
+                _handle_ctrl_comm_init(cw, buf, chip_platform)
             elif sub_cmd == _CTRL_REGION_ALLOCATE:
                 _handle_ctrl_region_allocate(buf, provider_region_store)
             elif sub_cmd == _CTRL_REGION_RELEASE:
@@ -4553,6 +4568,11 @@ class Worker:
         # keep ``Worker.init()`` cheap — it only forks chip children and
         # starts the C++ scheduler; no comm work happens there.
         self._comm_base_ready: bool = False
+        self._comm_arena_mu = threading.Lock()
+        self._comm_arena_free: list[tuple[int, int]] = [
+            (_A5_COMM_ARENA_RESERVED, _A5_COMM_ARENA_BYTES - _A5_COMM_ARENA_RESERVED)
+        ]
+        self._comm_arena_allocations: dict[int, tuple[int, int]] = {}
 
         self._endpoint_registry: EndpointRegistry | None = None
         self._endpoint_registry_epoch: int = 0
@@ -8483,6 +8503,46 @@ class Worker:
             after_success=lambda: setattr(self, "_comm_base_ready", True),
         )
 
+    def _reserve_comm_arena(self, allocation_id: int, window_size: int) -> int:
+        """Reserve one shared A5 arena offset; other backends keep offset zero."""
+        if str(self._config.get("platform", "")) != "a5":
+            return 0
+        alignment = _A5_COMM_ARENA_ALIGNMENT
+        reserved_size = ((int(window_size) + alignment - 1) // alignment) * alignment
+        with self._comm_arena_mu:
+            for index, (offset, extent) in enumerate(self._comm_arena_free):
+                if extent < reserved_size:
+                    continue
+                self._comm_arena_allocations[allocation_id] = (offset, reserved_size)
+                if extent == reserved_size:
+                    del self._comm_arena_free[index]
+                else:
+                    self._comm_arena_free[index] = (offset + reserved_size, extent - reserved_size)
+                return offset
+        raise MemoryError(
+            f"A5 communication arena exhausted: requested {window_size} bytes "
+            f"({_A5_COMM_ARENA_BYTES - _A5_COMM_ARENA_RESERVED} bytes usable per rank)"
+        )
+
+    def _release_comm_arena(self, allocation_id: int) -> None:
+        """Return a successfully released A5 domain slice and coalesce holes."""
+        if str(self._config.get("platform", "")) != "a5":
+            return
+        with self._comm_arena_mu:
+            allocation = self._comm_arena_allocations.pop(allocation_id, None)
+            if allocation is None:
+                return
+            self._comm_arena_free.append(allocation)
+            self._comm_arena_free.sort()
+            merged: list[tuple[int, int]] = []
+            for offset, extent in self._comm_arena_free:
+                if merged and merged[-1][0] + merged[-1][1] == offset:
+                    prior_offset, prior_extent = merged[-1]
+                    merged[-1] = (prior_offset, prior_extent + extent)
+                else:
+                    merged.append((offset, extent))
+            self._comm_arena_free = merged
+
     def _allocate_domain(  # noqa: PLR0912 -- linear input-validation + per-chip shm staging + dispatch + reply unpack; splitting obscures the fail-fast ordering
         self,
         *,
@@ -8506,6 +8566,7 @@ class Worker:
         with self._alloc_id_lock:
             allocation_id = self._next_alloc_id
             self._next_alloc_id += 1
+        window_offset = self._reserve_comm_arena(allocation_id, window_size)
 
         # Stage per-chip request shms (domain_rank differs per chip) and a
         # per-chip reply shm.  We let the chip child write back its own slot.
@@ -8538,6 +8599,7 @@ class Worker:
                         int(allocation_id),
                         int(len(workers)),
                         int(worker_to_rank[chip_idx]),  # domain_rank
+                        int(window_offset),
                         int(window_size),
                         int(buffer_count),
                     )
@@ -8617,6 +8679,7 @@ class Worker:
                                 )
                                 for i, b in enumerate(buffers)
                             },
+                            window_offset=int(window_offset),
                         )
                     handle.contexts = contexts
                 finally:
@@ -8654,12 +8717,22 @@ class Worker:
                     for buf in ctx.buffers.values():
                         self._child_prov_record_domain(chip_idx, int(buf.base), allocation_id, int(buf.nbytes))
 
-        published_handle = _run_with_owned_shared_memory(
-            len(workers) * 2,
-            allocate,
-            name_prefix="shm-domain-alloc-lifecycle-",
-            after_success=publish_provenance,
-        )
+        try:
+            published_handle = _run_with_owned_shared_memory(
+                len(workers) * 2,
+                allocate,
+                name_prefix="shm-domain-alloc-lifecycle-",
+                after_success=publish_provenance,
+            )
+        except BaseException:  # noqa: BLE001
+            # A partial backend commit remains owned by its live handle and is
+            # reclaimed by the run/close sweep. Only a pre-commit failure may
+            # return the arena slice immediately.
+            if handle is None or (
+                self._live_domains.get(name) is not handle and resources.live_domains.get(name) is not handle
+            ):
+                self._release_comm_arena(allocation_id)
+            raise
         assert handle is not None and published_handle is handle
         return handle
 
@@ -8869,6 +8942,7 @@ class Worker:
                     int(handle.allocation_id),
                     int(handle._domain_size),  # noqa: SLF001 -- backend release identity belongs to the handle
                     int(handle._domain_ranks[chip_idx]),  # noqa: SLF001 -- preserve the allocation-time rank
+                    0,  # window_offset — ignored on release
                     0,  # window_size — ignored on release
                     0,  # buffer_count — ignored on release
                 )
@@ -8879,6 +8953,7 @@ class Worker:
                 op="release",
                 allocation_id=handle.allocation_id,
             )
+            self._release_comm_arena(handle.allocation_id)
 
         def retire_live_handle() -> None:
             if self._live_domains.get(handle.name) is handle:

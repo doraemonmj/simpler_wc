@@ -50,8 +50,13 @@ struct CommContext {
     uint64_t urmaWorkSpace;
     uint64_t urmaWorkSpaceSize;
     // Byte displacement of this context's windowsIn[] view from the symmetric
-    // memory registered in urmaWorkSpace. Zero for base and dynamic domains.
+    // memory registered in urmaWorkSpace. Zero for the base context; non-zero
+    // for a derived arena slice.
     uint64_t urmaWindowOffset;
+    // Map a domain-local rank to the rank used by the communicator-scoped
+    // URMA workspace.  Base contexts contain the identity map; derived
+    // contexts may select/reorder any communicator ranks.
+    uint32_t urmaRankMap[COMM_MAX_RANK_NUM];
 };
 
 // The struct itself lives in this repo, so on the surface these asserts look
@@ -75,7 +80,7 @@ struct CommContext {
 // side, not a routine "oh I just added a field" edit.
 static_assert(std::is_trivially_copyable_v<CommContext>, "CommContext must remain trivially copyable");
 static_assert(std::is_standard_layout_v<CommContext>, "CommContext must remain standard layout");
-static_assert(sizeof(CommContext) == 1080, "CommContext size shifted");
+static_assert(sizeof(CommContext) == 1336, "CommContext size shifted");
 static_assert(offsetof(CommContext, workSpace) == 0, "CommContext layout drift");
 static_assert(offsetof(CommContext, workSpaceSize) == 8, "CommContext layout drift");
 static_assert(offsetof(CommContext, rankId) == 16, "CommContext layout drift");
@@ -86,3 +91,4 @@ static_assert(offsetof(CommContext, windowsOut) == 544, "CommContext layout drif
 static_assert(offsetof(CommContext, urmaWorkSpace) == 1056, "CommContext layout drift");
 static_assert(offsetof(CommContext, urmaWorkSpaceSize) == 1064, "CommContext layout drift");
 static_assert(offsetof(CommContext, urmaWindowOffset) == 1072, "CommContext layout drift");
+static_assert(offsetof(CommContext, urmaRankMap) == 1080, "CommContext layout drift");

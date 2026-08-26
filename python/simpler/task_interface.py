@@ -977,6 +977,9 @@ class ChipDomainContext:
     # Each named window slice as a device ``VMM_WINDOW`` Buffer owned by this chip. Name a task
     # arg with ``buffers[name].tensor(shapes, dtype)`` and dispatch it only to this chip (``domain_rank``).
     buffers: dict[str, Buffer]
+    # Offset inside a backend-owned persistent arena. Zero for backends that
+    # allocate one independent window per domain.
+    window_offset: int = 0
 
 
 class CommDomainHandle:

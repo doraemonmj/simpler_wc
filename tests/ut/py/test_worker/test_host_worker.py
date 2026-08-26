@@ -5706,6 +5706,49 @@ class TestUnreclaimedDeviceStateIsNeverSilent:
         worker._worker = cast(Any, object())
         return worker
 
+    def test_a5_comm_arena_reuses_and_coalesces_released_slices(self):
+        worker = self._worker()
+        worker._config = {"platform": "a5"}
+
+        first = worker._reserve_comm_arena(10, 300)
+        second = worker._reserve_comm_arena(11, 300)
+        assert first == worker_mod._A5_COMM_ARENA_RESERVED
+        assert second == first + 512
+
+        worker._release_comm_arena(10)
+        assert worker._reserve_comm_arena(12, 256) == first
+        worker._release_comm_arena(11)
+        worker._release_comm_arena(12)
+        assert worker._comm_arena_free == [
+            (
+                worker_mod._A5_COMM_ARENA_RESERVED,
+                worker_mod._A5_COMM_ARENA_BYTES - worker_mod._A5_COMM_ARENA_RESERVED,
+            )
+        ]
+
+    def test_non_a5_domain_does_not_consume_the_a5_arena(self):
+        worker = self._worker()
+        worker._config = {"platform": "a2a3"}
+
+        assert worker._reserve_comm_arena(10, 4096) == 0
+        assert worker._comm_arena_allocations == {}
+
+    def test_a5_precommit_failure_returns_its_arena_slice(self, monkeypatch):
+        worker = self._worker()
+        worker._config = {"platform": "a5", "device_ids": [0]}
+        worker._building_run_resources = worker_mod._RunResources()
+        monkeypatch.setattr(worker, "_ensure_comm_base", lambda: None)
+
+        def fail_staging(*_args, **_kwargs):
+            raise RuntimeError("staging failed")
+
+        monkeypatch.setattr(worker_mod, "_run_with_owned_shared_memory", fail_staging)
+
+        with pytest.raises(RuntimeError, match="staging failed"):
+            worker._allocate_domain(name="d", workers=(0,), window_size=4096, buffers=[])
+
+        assert worker._comm_arena_allocations == {}
+
     def test_a_partial_domain_allocation_keeps_its_original_release_ranks(self, monkeypatch):
         """Two chips of three committed a window and no handle exists.
 
@@ -5781,8 +5824,8 @@ class TestUnreclaimedDeviceStateIsNeverSilent:
         try:
             req_buf = cast(Any, request.buf)
             worker_mod._DOMAIN_REQ_HEADER.pack_into(
-                req_buf, 0, 7, 1, 0, 64, 1
-            )  # allocation_id, rank_count, domain_rank, window_size, buffer_count
+                req_buf, 0, 7, 1, 0, 0, 64, 1
+            )  # allocation_id, rank_count, domain_rank, window_offset, window_size, buffer_count
             # One buffer larger than the window: the carve raises after the
             # collective has already committed.
             struct.pack_into("<Q", req_buf, worker_mod._DOMAIN_REQ_HEADER.size, 4096)
@@ -5791,7 +5834,7 @@ class TestUnreclaimedDeviceStateIsNeverSilent:
             cw = cast(Any, SimpleNamespace(_impl=SimpleNamespace()))
 
             def committed(*args):
-                ctypes.c_uint64.from_address(args[5]).value = 1
+                ctypes.c_uint64.from_address(args[6]).value = 1
                 return 0xC7, 0xB000
 
             cw._impl.comm_alloc_domain_windows = committed
@@ -5822,11 +5865,11 @@ class TestUnreclaimedDeviceStateIsNeverSilent:
         reply = SharedMemory(create=True, size=worker_mod._DOMAIN_REPLY_HEADER.size)
         try:
             req_buf = cast(Any, request.buf)
-            worker_mod._DOMAIN_REQ_HEADER.pack_into(req_buf, 0, 7, 1, 0, 64, 0)
+            worker_mod._DOMAIN_REQ_HEADER.pack_into(req_buf, 0, 7, 1, 0, 0, 64, 0)
             struct.pack_into("<I", req_buf, worker_mod._DOMAIN_REQ_HEADER.size, 0)
 
             def committed_then_failed(*args):
-                commit_address = args[5]
+                commit_address = args[6]
                 ctypes.c_uint64.from_address(commit_address).value = 1
                 raise MemoryError("tuple conversion failed")
 

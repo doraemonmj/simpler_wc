@@ -213,10 +213,10 @@ symmetric window is realized:
 
 | Aspect | Sim | HCCL (onboard) |
 | ------ | --- | -------------- |
-| Window memory | POSIX shm + `ftruncate`, mmap'd per rank | a2a3: Fabric V2 handle exchange (`ACL_MEM_SHARE_HANDLE_TYPE_FABRIC`), falling back to VMM + shareable-handle IPC where Fabric is unsupported. a5: VMM shareable handles only. Cross-card P2P via `aclrtDeviceEnablePeerAccess` on both |
+| Window memory | POSIX shm + `ftruncate`, mmap'd per rank | a2a3: Fabric V2 handle exchange (`ACL_MEM_SHARE_HANDLE_TYPE_FABRIC`), falling back to VMM + shareable-handle IPC where Fabric is unsupported. a5: slices of one 200 MiB per-rank VMM arena registered for the communicator lifetime. Cross-card P2P via `aclrtDeviceEnablePeerAccess` on both |
 | Subset barrier | shm-header atomic, `allocation_id`-scoped | file barriers, `allocation_id`-scoped |
-| Window init | window zeroed before the subset barrier (`memset`) | window zeroed before the handle is announced (`aclrtMemset`) |
-| Async-DMA workspace | n/a | a2a3: opt-in per Worker (`enable_sdma`); a5: SDMA and URMA provisioned together for dense-prefix communication contexts; unsupported rank remapping fails on the host |
+| Window init | window zeroed before the subset barrier (`memset`) | a2a3: window zeroed before the handle is announced. a5: the persistent arena is zeroed before publication |
+| Async-DMA workspace | n/a | a2a3: opt-in per Worker (`enable_sdma`); a5: communicator-scoped SDMA and URMA workspaces are inherited by derived contexts, whose rank map supports arbitrary subsets/reorderings |
 
 The window is zero-initialized on both backends so scratch/signal protocols see
 a known starting state (matching the historical static-path contract).

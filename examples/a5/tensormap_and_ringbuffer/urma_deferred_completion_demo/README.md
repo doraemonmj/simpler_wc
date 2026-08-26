@@ -36,10 +36,15 @@ domain. `CommContext` keeps the SDMA workspace in the original `workSpace`
 pair and the URMA workspace in the appended `urmaWorkSpace` pair, so both
 engines are usable from the same build and domain.
 
-URMA metadata currently follows communicator-rank order. A5 therefore accepts
-dense-prefix domain mappings such as `[0, 1]`; unsupported mappings fail during
-host-side domain allocation rather than launching a kernel with a null URMA
-workspace.
+URMA metadata follows communicator-rank order, while each derived context
+carries an explicit domain-rank-to-communicator-rank map. Subsets and reordered
+domains therefore use the same communicator-scoped registration safely.
+
+The A5 worker registers one 200 MiB per-rank arena for the communicator and
+carves ordinary dynamic domains from it. The first 256 bytes are reserved, so
+this demo's normal `allocate_domain` path performs a real URMA TGET through a
+non-zero derived offset. Releasing a domain frees its context and returns its
+slice; the HCCL registration and channels live until communicator teardown.
 
 The test has only the ordinary scene constraints:
 

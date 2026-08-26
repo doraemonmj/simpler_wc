@@ -221,7 +221,7 @@ values yield `SIMPLER_ERROR_ASYNC_COMPLETION_INVALID`.
 | ------ | ---- | -- | ------ |
 | COUNTER (default) | registered | registered | **Shipped** — `tests/st/worker/comm_domain/async_notify` runs onboard on both architectures; `tests/st/worker/comm_domain/deferred_notify` runs in sim on both and onboard on a2a3, through the `st-onboard-*` / `st-sim-*` jobs in `ci.yml`. Routed by `CASES[*]["platforms"]`, no `skipif` |
 | SDMA | build macro forced ON; runtime opt-in | built and provisioned with communication contexts | a2a3 **Shipped** (the "SDMA pytest (a2a3)" step in `ci.yml`); a5 demo runs in the ordinary A5 sweep |
-| URMA | absent | built and provisioned with dense-prefix communication contexts | A5-only; exercised by `urma_deferred_completion_demo` without a build or environment gate |
+| URMA | absent | built and provisioned with communication contexts | A5-only; exercised by `urma_deferred_completion_demo` without a build or environment gate |
 | ROCE, CCU | enum only | enum only | **Name only** |
 
 **a2a3 SDMA is opt-in at runtime**, not "always on": the provider is always
@@ -240,13 +240,14 @@ CQEs checking the owner bit, advances the tail and rings the doorbell
 (`src/a5/.../backend/urma/urma_completion_scheduler.h:133-215`); the kernel
 submits `TGET_ASYNC`/`TPUT_ASYNC<DmaEngine::URMA>` with 256 MB chunking. The
 pinned PTO-ISA defines `PTO_URMA_SUPPORTED` for DAV_3510. The host provisions
-the process-global SDMA workspace and the domain-scoped URMA workspace before
+the process-global SDMA workspace and communicator-scoped URMA workspace before
 uploading `CommContext`; the original `workSpace` pair remains the SDMA ABI,
 and the appended `urmaWorkSpace` pair carries URMA. A derived context also
 carries `urmaWindowOffset`, translating its domain-local window offsets back
-to the registered base MR. URMA metadata is indexed by communicator rank, so
-A5 currently rejects non-dense-prefix rank mappings on the host instead of
-returning a context with URMA silently disabled. Engine-specific kernels run
+to the registered base MR. URMA metadata is indexed by communicator rank, and
+derived contexts map domain-local ranks onto those communicator ranks. Dynamic
+domains are slices of the registered arena, so sequential and concurrent
+domains do not create extra HCCL memory registrations or channels. Engine-specific kernels run
 from the same default build without an environment selector.
 
 **HCCL is control-plane setup, not collective data movement.** Communicator
