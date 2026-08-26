@@ -64,10 +64,12 @@ class _CommContext(ctypes.Structure):
         ("winSize", ctypes.c_uint64),
         ("windowsIn", ctypes.c_uint64 * _COMM_MAX_RANK_NUM),
         ("windowsOut", ctypes.c_uint64 * _COMM_MAX_RANK_NUM),
+        ("urmaWorkSpace", ctypes.c_uint64),
+        ("urmaWorkSpaceSize", ctypes.c_uint64),
     ]
 
 
-assert ctypes.sizeof(_CommContext) == 1056, "CommContext python mirror drifted from C++ header"
+assert ctypes.sizeof(_CommContext) == 1072, "CommContext python mirror drifted from C++ header"
 
 
 def _rank_entry(
@@ -136,6 +138,8 @@ def _rank_entry(
         result["local_base"] = int(local_base)
         result["rank_id"] = int(host_ctx.rankId)
         result["rank_num"] = int(host_ctx.rankNum)
+        result["sdma_workspace"] = int(host_ctx.workSpace)
+        result["urma_workspace"] = int(host_ctx.urmaWorkSpace)
 
         # Barrier.  The C++ HCCL UT observed CANN error 507018 here on some
         # builds; that bug is tracked independently.  Surface the failure to
@@ -218,6 +222,9 @@ def test_two_rank_comm_lifecycle(st_platform, st_device_ids):
         r = results_by_rank[rank]
         if not r.get("ok"):
             pytest.fail(f"rank {rank} failed at stage {r.get('stage')!r}:\n{r.get('error', '(no traceback)')}")
+        if st_platform == "a5":
+            assert r["sdma_workspace"] != 0, f"rank {rank} has no SDMA workspace"
+            assert r["urma_workspace"] != 0, f"rank {rank} has no URMA workspace"
 
     # Each rank's own-slot invariant (windowsIn[rank] == local_base) is
     # asserted inside _rank_entry; all peer slots are already checked to be
