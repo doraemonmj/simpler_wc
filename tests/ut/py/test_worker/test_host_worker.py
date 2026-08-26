@@ -5722,6 +5722,8 @@ class TestUnreclaimedDeviceStateIsNeverSilent:
     def test_a5_comm_arena_reuses_and_coalesces_released_slices(self):
         worker = self._worker()
         worker._config = {"platform": "a5"}
+        arena_size = 4096
+        worker._initialize_comm_arena(arena_size)
 
         first = worker._reserve_comm_arena(10, 300)
         second = worker._reserve_comm_arena(11, 300)
@@ -5735,9 +5737,72 @@ class TestUnreclaimedDeviceStateIsNeverSilent:
         assert worker._comm_arena_free == [
             (
                 worker_mod._A5_COMM_ARENA_RESERVED,
-                worker_mod._A5_COMM_ARENA_BYTES - worker_mod._A5_COMM_ARENA_RESERVED,
+                arena_size - worker_mod._A5_COMM_ARENA_RESERVED,
             )
         ]
+
+    def test_a5_comm_base_uses_the_backend_reported_arena_size(self, monkeypatch):
+        worker = self._worker()
+        worker._config = {"platform": "a5", "device_ids": [0, 1]}
+        monkeypatch.setattr(worker, "_comm_plan_rootinfo_path", lambda: "/tmp/comm-rootinfo")
+        arena_size = 8192
+
+        def control_comm_init(chip_idx, request_name):
+            request = SharedMemory(name=request_name)
+            request_buf = request.buf
+            assert request_buf is not None
+            try:
+                rank, nranks, requested_size = worker_mod._COMM_INIT_HEADER.unpack_from(request_buf, 0)
+                assert (rank, nranks, requested_size) == (chip_idx, 2, 0)
+                worker_mod._COMM_INIT_HEADER.pack_into(request_buf, 0, rank, nranks, arena_size)
+            finally:
+                request_buf.release()
+                request.close()
+
+        worker._worker = cast(Any, SimpleNamespace(control_comm_init=control_comm_init))
+
+        worker._ensure_comm_base()
+
+        assert worker._comm_base_ready
+        assert worker._comm_arena_size == arena_size
+        assert worker._comm_arena_free == [
+            (
+                worker_mod._A5_COMM_ARENA_RESERVED,
+                arena_size - worker_mod._A5_COMM_ARENA_RESERVED,
+            )
+        ]
+
+    def test_a5_comm_init_child_reports_comm_get_window_size(self):
+        rootinfo_path = "/tmp/comm-rootinfo"
+        path_bytes = rootinfo_path.encode() + b"\x00"
+        request = SharedMemory(create=True, size=worker_mod._COMM_INIT_HEADER.size + len(path_bytes))
+        request_buf = request.buf
+        assert request_buf is not None
+        worker_mod._COMM_INIT_HEADER.pack_into(request_buf, 0, 1, 2, 0)
+        path_start = worker_mod._COMM_INIT_HEADER.size
+        request_buf[path_start : path_start + len(path_bytes)] = path_bytes
+        mailbox = memoryview(bytearray(worker_mod._OFF_ARGS + worker_mod._CTRL_SHM_NAME_BYTES))
+        encoded_name = request.name.encode()
+        mailbox[worker_mod._OFF_ARGS : worker_mod._OFF_ARGS + len(encoded_name)] = encoded_name
+        calls = []
+        chip_worker = SimpleNamespace(
+            comm_init=lambda rank, nranks, path: calls.append(("init", rank, nranks, path)) or 17,
+            comm_alloc_windows=lambda handle, size: calls.append(("alloc", handle, size)) or 23,
+            comm_get_window_size=lambda handle: calls.append(("size", handle)) or 8192,
+        )
+
+        try:
+            worker_mod._handle_ctrl_comm_init(cast(Any, chip_worker), mailbox, "a5")
+
+            assert worker_mod._COMM_INIT_HEADER.unpack_from(request_buf, 0) == (1, 2, 8192)
+            assert calls == [("init", 1, 2, rootinfo_path), ("alloc", 17, 0), ("size", 17)]
+            assert chip_worker._comm_base_handle_cached == 17
+            assert chip_worker._comm_base_windows_ready is True
+        finally:
+            mailbox.release()
+            request_buf.release()
+            request.close()
+            request.unlink()
 
     def test_non_a5_domain_does_not_consume_the_a5_arena(self):
         worker = self._worker()
@@ -5749,6 +5814,7 @@ class TestUnreclaimedDeviceStateIsNeverSilent:
     def test_a5_precommit_failure_returns_its_arena_slice(self, monkeypatch):
         worker = self._worker()
         worker._config = {"platform": "a5", "device_ids": [0]}
+        worker._initialize_comm_arena(8192)
         worker._building_run_resources = worker_mod._RunResources()
         monkeypatch.setattr(worker, "_ensure_comm_base", lambda: None)
 

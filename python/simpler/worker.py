@@ -604,9 +604,11 @@ _CTRL_OP_NAMES[_CTRL_DEVICE_MEMORY_INFO] = "device_memory_info"
 _LOCAL_GLOBAL_CONTROL_HEADER = struct.Struct("<IIQ")
 _CTRL_OP_NAMES[_CTRL_GLOBAL_DOMAIN_NODE] = "global_domain"
 
-# Layout of the CTRL_COMM_INIT request shm.
-_COMM_INIT_HEADER = struct.Struct("<II")  # rank (u32), nranks (u32)
-assert _COMM_INIT_HEADER.size == 8
+# Layout of the CTRL_COMM_INIT request/reply shm.  The parent initializes
+# ``arena_size`` to zero; an A5 child replaces it with the actual size chosen
+# by the backend after the persistent communication window is allocated.
+_COMM_INIT_HEADER = struct.Struct("<IIQ")  # rank (u32), nranks (u32), arena_size (u64)
+assert _COMM_INIT_HEADER.size == 16
 
 _PY_CALLABLE_MAGIC = b"SPYC"
 _PY_CALLABLE_VERSION = 1
@@ -631,10 +633,10 @@ _DOMAIN_REQ_HEADER = struct.Struct("<QIIQQI4x")
 #         window_offset (u64), window_size (u64), buffer_count (u32), padding (4 bytes)
 assert _DOMAIN_REQ_HEADER.size == 40
 
-# A5 registers one communicator-lifetime arena with HCCL/URMA and carves
-# dynamic domains from it. Keep the first aligned unit unused so even the
-# first ordinary URMA scene exercises non-zero derived-window translation.
-_A5_COMM_ARENA_BYTES = 200 * 1024 * 1024
+# A5 registers one backend-sized communicator-lifetime arena with HCCL/URMA
+# and carves dynamic domains from it. Keep the first aligned unit unused so
+# even the first ordinary URMA scene exercises non-zero derived-window
+# translation.
 _A5_COMM_ARENA_ALIGNMENT = 256
 _A5_COMM_ARENA_RESERVED = _A5_COMM_ARENA_ALIGNMENT
 
@@ -2344,24 +2346,29 @@ def _handle_ctrl_comm_init(cw: ChipWorker, buf: memoryview, chip_platform: str) 
     req_buf = req_shm.buf
     assert req_buf is not None
     try:
-        (rank, nranks) = _COMM_INIT_HEADER.unpack_from(req_buf, 0)
+        rank, nranks, _arena_size = _COMM_INIT_HEADER.unpack_from(req_buf, 0)
         # rootinfo_path is the rest of the shm, NUL-terminated.
         raw = bytes(req_buf[_COMM_INIT_HEADER.size :])
         nul = raw.find(b"\x00")
         rootinfo_path = raw[: nul if nul >= 0 else len(raw)].decode("utf-8", "replace")
+
+        handle = cw.comm_init(int(rank), int(nranks), rootinfo_path)
+        if handle == 0:
+            raise RuntimeError("comm_init returned 0 handle for hidden base communicator")
+        cw._comm_base_handle_cached = int(handle)
+        if chip_platform == "a5":
+            if not getattr(cw, "_comm_base_windows_ready", False):
+                device_ctx = cw.comm_alloc_windows(int(handle), 0)
+                if device_ctx == 0:
+                    raise RuntimeError("comm_alloc_windows returned 0 for the A5 persistent communication arena")
+                cw._comm_base_windows_ready = True
+            arena_size = int(cw.comm_get_window_size(int(handle)))
+            if arena_size <= 0:
+                raise RuntimeError(f"comm_get_window_size returned invalid A5 arena size {arena_size}")
+            _COMM_INIT_HEADER.pack_into(req_buf, 0, int(rank), int(nranks), arena_size)
     finally:
         req_buf.release()
         req_shm.close()
-
-    handle = cw.comm_init(int(rank), int(nranks), rootinfo_path)
-    if handle == 0:
-        raise RuntimeError("comm_init returned 0 handle for hidden base communicator")
-    cw._comm_base_handle_cached = int(handle)
-    if chip_platform == "a5" and not getattr(cw, "_comm_base_windows_ready", False):
-        device_ctx = cw.comm_alloc_windows(int(handle), 0)
-        if device_ctx == 0:
-            raise RuntimeError("comm_alloc_windows returned 0 for the A5 persistent communication arena")
-        cw._comm_base_windows_ready = True
 
 
 @dataclass
@@ -4574,9 +4581,8 @@ class Worker:
         # starts the C++ scheduler; no comm work happens there.
         self._comm_base_ready: bool = False
         self._comm_arena_mu = threading.Lock()
-        self._comm_arena_free: list[tuple[int, int]] = [
-            (_A5_COMM_ARENA_RESERVED, _A5_COMM_ARENA_BYTES - _A5_COMM_ARENA_RESERVED)
-        ]
+        self._comm_arena_size: int = 0
+        self._comm_arena_free: list[tuple[int, int]] = []
         self._comm_arena_allocations: dict[int, tuple[int, int]] = {}
 
         self._endpoint_registry: EndpointRegistry | None = None
@@ -8476,7 +8482,8 @@ class Worker:
         device_ids = self._config.get("device_ids", [])
         rootinfo_path = self._comm_plan_rootinfo_path()
 
-        # Layout: header (rank, nranks) + NUL-terminated rootinfo_path bytes.
+        # Layout: header (rank, nranks, backend arena-size reply) followed by
+        # NUL-terminated rootinfo_path bytes.
         path_bytes = rootinfo_path.encode("utf-8") + b"\x00"
         req_size = _COMM_INIT_HEADER.size + len(path_bytes)
 
@@ -8487,7 +8494,7 @@ class Worker:
                 request_shms[chip_idx] = req
                 req_buf = req.buf
                 assert req_buf is not None
-                _COMM_INIT_HEADER.pack_into(req_buf, 0, int(chip_idx), int(len(device_ids)))
+                _COMM_INIT_HEADER.pack_into(req_buf, 0, int(chip_idx), int(len(device_ids)), 0)
                 req_buf[_COMM_INIT_HEADER.size : _COMM_INIT_HEADER.size + len(path_bytes)] = path_bytes
 
             dw = self._worker
@@ -8508,12 +8515,36 @@ class Worker:
                     f"first error chip={first[0]}: {first[1]}"
                 )
 
+            if str(self._config.get("platform", "")) == "a5":
+                arena_sizes: set[int] = set()
+                for chip_idx in range(len(device_ids)):
+                    req_buf = request_shms[chip_idx].buf
+                    assert req_buf is not None
+                    arena_sizes.add(int(_COMM_INIT_HEADER.unpack_from(req_buf, 0)[2]))
+                if len(arena_sizes) != 1:
+                    raise RuntimeError(f"A5 backend reported inconsistent communication arena sizes: {arena_sizes}")
+                self._initialize_comm_arena(arena_sizes.pop())
+
         _run_with_owned_shared_memory(
             len(device_ids),
             initialize,
             name_prefix="shm-comm-init-lifecycle-",
             after_success=lambda: setattr(self, "_comm_base_ready", True),
         )
+
+    def _initialize_comm_arena(self, arena_size: int) -> None:
+        """Initialize the A5 slice allocator from the backend's actual window size."""
+        arena_size = int(arena_size)
+        if arena_size <= _A5_COMM_ARENA_RESERVED:
+            raise RuntimeError(
+                f"A5 backend communication arena is too small: {arena_size} bytes "
+                f"(must exceed {_A5_COMM_ARENA_RESERVED})"
+            )
+        with self._comm_arena_mu:
+            if self._comm_arena_allocations:
+                raise RuntimeError("cannot reinitialize the A5 communication arena while domain slices are live")
+            self._comm_arena_size = arena_size
+            self._comm_arena_free = [(_A5_COMM_ARENA_RESERVED, arena_size - _A5_COMM_ARENA_RESERVED)]
 
     def _reserve_comm_arena(self, allocation_id: int, window_size: int) -> int:
         """Reserve one shared A5 arena offset; other backends keep offset zero."""
@@ -8522,6 +8553,8 @@ class Worker:
         alignment = _A5_COMM_ARENA_ALIGNMENT
         reserved_size = ((int(window_size) + alignment - 1) // alignment) * alignment
         with self._comm_arena_mu:
+            if self._comm_arena_size == 0:
+                raise RuntimeError("A5 communication arena is not initialized")
             for index, (offset, extent) in enumerate(self._comm_arena_free):
                 if extent < reserved_size:
                     continue
@@ -8533,7 +8566,7 @@ class Worker:
                 return offset
         raise MemoryError(
             f"A5 communication arena exhausted: requested {window_size} bytes "
-            f"({_A5_COMM_ARENA_BYTES - _A5_COMM_ARENA_RESERVED} bytes usable per rank)"
+            f"({self._comm_arena_size - _A5_COMM_ARENA_RESERVED} bytes usable per rank)"
         )
 
     def _release_comm_arena(self, allocation_id: int) -> None:
