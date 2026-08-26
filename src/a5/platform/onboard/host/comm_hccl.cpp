@@ -49,6 +49,8 @@
 #include "pto/comm/async/sdma/sdma_workspace_manager.hpp"
 #include "pto/comm/async/urma/urma_workspace_manager.hpp"
 
+#include <algorithm>
+
 // Thin wrappers around the HCCL public APIs we use. Kept as a translation
 // layer in case we need to swap (e.g., InitConfig variant) later.
 static inline HcclResult hccl_get_root_info(HcclRootInfo *ri) { return HcclGetRootInfo(ri); }
@@ -79,7 +81,12 @@ struct DomainAllocation {
     // can cycle repeatedly within one comm handle before any device reset, so
     // these are released explicitly at domain teardown rather than left to reset.
     std::vector<std::pair<void *, aclrtDrvMemHandle>> peer_windows;
-    std::unique_ptr<pto::comm::urma::UrmaWorkspaceManager> urma_workspace;
+    // A5 dynamic domains are slices of the communicator-owned base arena.
+    // Such slices own only their device context, never the VMM mapping or
+    // the communicator-scoped URMA registration.
+    bool arena_slice = false;
+    size_t window_offset = 0;
+    size_t window_size = 0;
     CommContext *device_ctx = nullptr;  // aclrtMalloc'd CommContext mirror
 };
 
@@ -96,6 +103,7 @@ struct CommHandle_ {
     CommContext host_ctx{};
     CommContext *device_ctx = nullptr;
     bool owns_device_ctx = false;
+    bool base_windows_attempted = false;
     std::vector<CommContext *> derived_contexts;
     std::unordered_map<uint64_t, std::unique_ptr<DomainAllocation>> domain_allocations;
     std::unique_ptr<pto::comm::sdma::SdmaWorkspaceManager> sdma_workspace;
@@ -770,14 +778,6 @@ static uint64_t urma_workspace_bytes(uint32_t rank_count) {
                (2ULL * sizeof(UrmaWQCtx) * qp_num + 2ULL * sizeof(UrmaCqCtx) * qp_num + sizeof(UrmaMemInfo) * qp_num);
 }
 
-static bool rank_ids_are_dense_prefix(const uint32_t *rank_ids, size_t rank_count) {
-    if (rank_ids == nullptr) return false;
-    for (size_t i = 0; i < rank_count; ++i) {
-        if (rank_ids[i] != static_cast<uint32_t>(i)) return false;
-    }
-    return true;
-}
-
 static bool init_urma_workspace(
     CommHandle h, uint32_t rank_id, uint32_t rank_count, void *symmetric_addr, uint64_t symmetric_size,
     std::unique_ptr<pto::comm::urma::UrmaWorkspaceManager> &workspace
@@ -814,8 +814,6 @@ static bool ensure_base_urma_workspace(CommHandle h) {
     h->host_ctx.urmaWorkSpaceSize = urma_workspace_bytes(static_cast<uint32_t>(h->nranks));
     return h->host_ctx.urmaWorkSpace != 0 && h->host_ctx.urmaWorkSpaceSize != 0;
 }
-
-static void reset_domain_urma_workspace(DomainAllocation &alloc) { alloc.urma_workspace.reset(); }
 
 static void reset_base_urma_workspace(CommHandle h) { h->urma_workspace.reset(); }
 
@@ -1011,27 +1009,12 @@ static int domain_alloc_via_ipc(
         domain_sdma_workspace_addr = reinterpret_cast<uint64_t>(h->sdma_workspace->GetWorkspaceAddr());
         domain_sdma_workspace_size = 16 * 1024;
     }
-    uint64_t domain_urma_workspace_addr = 0;
-    uint64_t domain_urma_workspace_size = 0;
-    if (!init_urma_workspace(
-            h, domain_rank, static_cast<uint32_t>(rank_count), localBuf, aligned_size, out->urma_workspace
-        )) {
-        reset_domain_urma_workspace(*out);
-        release_domain_peer_windows(*out);
-        release_own_vmm_window(localBuf, handle);
-        return -1;
-    }
-    domain_urma_workspace_addr = reinterpret_cast<uint64_t>(out->urma_workspace->GetWorkspaceAddr());
-    domain_urma_workspace_size = urma_workspace_bytes(static_cast<uint32_t>(rank_count));
-
     CommContext ctx{};
     ctx.rankId = domain_rank;
     ctx.rankNum = static_cast<uint32_t>(subset_n);
     ctx.winSize = aligned_size;
     ctx.workSpace = domain_sdma_workspace_addr;
     ctx.workSpaceSize = domain_sdma_workspace_size;
-    ctx.urmaWorkSpace = domain_urma_workspace_addr;
-    ctx.urmaWorkSpaceSize = domain_urma_workspace_size;
     ctx.windowsIn[my_dr] = reinterpret_cast<uint64_t>(localBuf);
     // Import each peer's shareable handle onto our device; see the symmetry
     // note in alloc_windows_via_ipc (one win_size, shared chip granularity).
@@ -1044,7 +1027,6 @@ static int domain_alloc_via_ipc(
                 "[comm rank %d] alloc_domain: ImportFromShareableHandle(peer_dr=%d) -> %d", h->rank, p,
                 static_cast<int>(aret)
             );
-            reset_domain_urma_workspace(*out);
             release_domain_peer_windows(*out);
             release_own_vmm_window(localBuf, handle);
             return -1;
@@ -1057,7 +1039,6 @@ static int domain_alloc_via_ipc(
                 static_cast<int>(aret)
             );
             aclrtFreePhysical(peerHandle);
-            reset_domain_urma_workspace(*out);
             release_domain_peer_windows(*out);
             release_own_vmm_window(localBuf, handle);
             return -1;
@@ -1067,7 +1048,6 @@ static int domain_alloc_via_ipc(
             LOG_ERROR("[comm rank %d] alloc_domain: peer MapMem(peer_dr=%d) -> %d", h->rank, p, static_cast<int>(aret));
             aclrtReleaseMemAddress(peerVa);
             aclrtFreePhysical(peerHandle);
-            reset_domain_urma_workspace(*out);
             release_domain_peer_windows(*out);
             release_own_vmm_window(localBuf, handle);
             return -1;
@@ -1080,7 +1060,6 @@ static int domain_alloc_via_ipc(
             aclrtUnmapMem(peerVa);
             aclrtReleaseMemAddress(peerVa);
             aclrtFreePhysical(peerHandle);
-            reset_domain_urma_workspace(*out);
             release_domain_peer_windows(*out);
             release_own_vmm_window(localBuf, handle);
             return -1;
@@ -1093,7 +1072,6 @@ static int domain_alloc_via_ipc(
     aret = aclrtMalloc(&newDevMem, sizeof(CommContext), ACL_MEM_MALLOC_HUGE_FIRST);
     if (aret != ACL_SUCCESS) {
         LOG_ERROR("[comm rank %d] alloc_domain: ctx aclrtMalloc -> %d", h->rank, static_cast<int>(aret));
-        reset_domain_urma_workspace(*out);
         release_domain_peer_windows(*out);
         release_own_vmm_window(localBuf, handle);
         return -1;
@@ -1102,7 +1080,6 @@ static int domain_alloc_via_ipc(
     if (aret != ACL_SUCCESS) {
         LOG_ERROR("[comm rank %d] alloc_domain: ctx Memcpy H2D -> %d", h->rank, static_cast<int>(aret));
         aclrtFree(newDevMem);
-        reset_domain_urma_workspace(*out);
         release_domain_peer_windows(*out);
         release_own_vmm_window(localBuf, handle);
         return -1;
@@ -1116,14 +1093,15 @@ static int domain_alloc_via_ipc(
 extern "C" int comm_alloc_windows(CommHandle h, size_t win_size, uint64_t *device_ctx_out) try {
     if (!h || !device_ctx_out) return -1;
 
-    // Idempotency guard: comm_alloc_windows is not re-entrant. The localBuf
-    // allocated by alloc_windows_via_ipc is owned by the handle's windowsIn[]
-    // entries and is only reclaimed at aclrtResetDevice; calling this twice
-    // would leak a full per-rank pool. device_ctx is set on first success.
-    if (h->device_ctx != nullptr) {
-        LOG_ERROR("[comm rank %d] comm_alloc_windows: already allocated on this handle", h->rank);
+    // Idempotency guard: even a failed URMA setup may already have registered
+    // the still-live base VMM window. Refuse a same-handle retry so the fixed
+    // HCCL tag can never collide with a partial first attempt; comm_destroy
+    // tears down the communicator before a fresh handle may try again.
+    if (h->base_windows_attempted) {
+        LOG_ERROR("[comm rank %d] comm_alloc_windows: allocation was already attempted on this handle", h->rank);
         return -1;
     }
+    h->base_windows_attempted = true;
 
     // Path D: DIY symmetric pool on stable ACL VMM shareable handles +
     // EnablePeerAccess. Replaced the prior HcclAllocComResourceByTiling
@@ -1137,6 +1115,9 @@ extern "C" int comm_alloc_windows(CommHandle h, size_t win_size, uint64_t *devic
     // CommContext is uploaded.
     ensure_sdma_workspace(h);
     if (!ensure_base_urma_workspace(h)) return -1;
+    for (int rank = 0; rank < h->nranks; ++rank) {
+        h->host_ctx.urmaRankMap[rank] = static_cast<uint32_t>(rank);
+    }
     if (!file_barrier(h->rootinfo_path, h->rank, h->nranks, "base_urma_ready", h->run_token)) return -1;
 
     void *newDevMem = nullptr;
@@ -1187,13 +1168,8 @@ extern "C" int comm_derive_context(
         );
         return -1;
     }
-    if (!rank_ids_are_dense_prefix(rank_ids, rank_count)) {
-        LOG_ERROR(
-            "[comm rank %d] comm_derive_context: A5 URMA requires dense-prefix rank_ids [0, %zu)", h->rank, rank_count
-        );
-        return -1;
-    }
-    if (window_offset + window_size > static_cast<size_t>(h->host_ctx.winSize)) {
+    if (window_offset > static_cast<size_t>(h->host_ctx.winSize) ||
+        window_size > static_cast<size_t>(h->host_ctx.winSize) - window_offset) {
         LOG_ERROR(
             "[comm rank %d] comm_derive_context: window range [%zu, %zu) exceeds base window size %llu", h->rank,
             window_offset, window_offset + window_size, static_cast<unsigned long long>(h->host_ctx.winSize)
@@ -1221,6 +1197,7 @@ extern "C" int comm_derive_context(
         }
         ctx.windowsIn[i] = h->host_ctx.windowsIn[base_rank] + window_offset;
         ctx.windowsOut[i] = h->host_ctx.windowsOut[base_rank] + window_offset;
+        ctx.urmaRankMap[i] = base_rank;
     }
 
     void *newDevMem = nullptr;
@@ -1264,7 +1241,7 @@ extern "C" int comm_barrier(CommHandle h) {
 
 extern "C" int comm_alloc_domain_windows(
     CommHandle h, uint64_t allocation_id, const uint32_t *rank_ids, size_t rank_count, uint32_t domain_rank,
-    size_t window_size, uint64_t *device_ctx_out, uint64_t *local_window_base_out
+    size_t window_offset, size_t window_size, uint64_t *device_ctx_out, uint64_t *local_window_base_out
 ) try {
     if (!h || !rank_ids || !device_ctx_out || !local_window_base_out) return -1;
     if (rank_count == 0 || rank_count > COMM_MAX_RANK_NUM || domain_rank >= rank_count || window_size == 0) {
@@ -1272,10 +1249,6 @@ extern "C" int comm_alloc_domain_windows(
             "[comm rank %d] alloc_domain: bad args (rank_count=%zu domain_rank=%u window_size=%zu)", h->rank,
             rank_count, domain_rank, window_size
         );
-        return -1;
-    }
-    if (!rank_ids_are_dense_prefix(rank_ids, rank_count)) {
-        LOG_ERROR("[comm rank %d] alloc_domain: A5 URMA requires dense-prefix rank_ids [0, %zu)", h->rank, rank_count);
         return -1;
     }
     if (h->domain_allocations.count(allocation_id) > 0) {
@@ -1292,18 +1265,64 @@ extern "C" int comm_alloc_domain_windows(
         );
         return -1;
     }
-    // The base communicator only needs comm_init to have run (rootinfo_path
-    // + run_token are set, used to scope barrier filenames).  We do NOT
-    // require comm_alloc_windows on the base in the orch-only model — the
-    // dynamic alloc path does its own per-allocation aclrtMalloc + IPC dance.
-    if (h->rootinfo_path.empty() || h->hccl_comm == nullptr) {
-        LOG_ERROR("[comm rank %d] alloc_domain: base communicator not initialised", h->rank);
+    if (h->device_ctx == nullptr || h->host_ctx.urmaWorkSpace == 0 || h->host_ctx.winSize == 0) {
+        LOG_ERROR("[comm rank %d] alloc_domain: persistent base arena is not initialised", h->rank);
+        return -1;
+    }
+    if (window_offset > static_cast<size_t>(h->host_ctx.winSize) ||
+        window_size > static_cast<size_t>(h->host_ctx.winSize) - window_offset) {
+        LOG_ERROR(
+            "[comm rank %d] alloc_domain: arena range [%zu, %zu) exceeds base window size %llu", h->rank, window_offset,
+            window_offset + window_size, static_cast<unsigned long long>(h->host_ctx.winSize)
+        );
+        return -1;
+    }
+    for (const auto &entry : h->domain_allocations) {
+        const auto &live = entry.second;
+        if (!live->arena_slice) continue;
+        const size_t live_end = live->window_offset + live->window_size;
+        const size_t requested_end = window_offset + window_size;
+        if (window_offset < live_end && live->window_offset < requested_end) {
+            LOG_ERROR(
+                "[comm rank %d] alloc_domain: arena range [%zu, %zu) overlaps live allocation_id=%llu "
+                "range [%zu, %zu)",
+                h->rank, window_offset, requested_end, static_cast<unsigned long long>(entry.first),
+                live->window_offset, live_end
+            );
+            return -1;
+        }
+    }
+
+    void *local_slice = reinterpret_cast<void *>(
+        static_cast<uintptr_t>(h->host_ctx.windowsIn[h->rank] + static_cast<uint64_t>(window_offset))
+    );
+    aclError clear_ret = aclrtMemset(local_slice, window_size, 0, window_size);
+    if (clear_ret != ACL_SUCCESS) {
+        LOG_ERROR(
+            "[comm rank %d] alloc_domain: arena-slice aclrtMemset failed: %d", h->rank, static_cast<int>(clear_ret)
+        );
         return -1;
     }
 
     auto alloc = std::make_unique<DomainAllocation>();
-    int rc = domain_alloc_via_ipc(h, allocation_id, rank_ids, rank_count, domain_rank, window_size, alloc.get());
+    uint64_t derived_ctx = 0;
+    int rc = comm_derive_context(h, rank_ids, rank_count, domain_rank, window_offset, window_size, &derived_ctx);
     if (rc != 0) return rc;
+    auto *derived = reinterpret_cast<CommContext *>(derived_ctx);
+    auto derived_it = std::find(h->derived_contexts.begin(), h->derived_contexts.end(), derived);
+    if (derived_it == h->derived_contexts.end()) {
+        aclrtFree(derived);
+        LOG_ERROR("[comm rank %d] alloc_domain: derived context ownership was not recorded", h->rank);
+        return -1;
+    }
+    h->derived_contexts.erase(derived_it);
+    alloc->rank = static_cast<int>(domain_rank);
+    alloc->nranks = static_cast<int>(rank_count);
+    alloc->local_buf = local_slice;
+    alloc->arena_slice = true;
+    alloc->window_offset = window_offset;
+    alloc->window_size = window_size;
+    alloc->device_ctx = derived;
 
     *device_ctx_out = reinterpret_cast<uint64_t>(alloc->device_ctx);
     *local_window_base_out = reinterpret_cast<uint64_t>(alloc->local_buf);
@@ -1353,12 +1372,11 @@ comm_release_domain_windows(CommHandle h, uint64_t allocation_id, size_t rank_co
         aclError aret = aclrtFree(alloc->device_ctx);
         if (aret != ACL_SUCCESS && rc == 0) rc = -1;
     }
-    reset_domain_urma_workspace(*alloc);
     // local_buf and every peer import are VMM-mapped VAs, not aclrtMalloc
     // pointers: unmap + release the VA reservation, then free the physical
     // handle.
     release_domain_peer_windows(*alloc);
-    if (alloc->local_buf) {
+    if (alloc->local_buf && !alloc->arena_slice) {
         release_own_vmm_window(alloc->local_buf, alloc->own_handle);
         alloc->local_buf = nullptr;
         alloc->own_handle = nullptr;
@@ -1420,9 +1438,8 @@ extern "C" int comm_destroy(CommHandle h) try {
     for (auto &kv : h->domain_allocations) {
         auto &alloc = kv.second;
         if (alloc->device_ctx) aclrtFree(alloc->device_ctx);
-        reset_domain_urma_workspace(*alloc);
         release_domain_peer_windows(*alloc);
-        if (alloc->local_buf) release_own_vmm_window(alloc->local_buf, alloc->own_handle);
+        if (alloc->local_buf && !alloc->arena_slice) release_own_vmm_window(alloc->local_buf, alloc->own_handle);
     }
     h->domain_allocations.clear();
     reset_base_urma_workspace(h);

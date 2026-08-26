@@ -191,10 +191,8 @@ int comm_get_window_size(CommHandle h, size_t *size_out);
  * device_ctx_out points to a backend-owned device CommContext that remains
  * valid until comm_destroy(base).
  *
- * The A5 backend currently requires rank_ids to be the dense prefix
- * [0, rank_count) because its URMA workspace is indexed in communicator-rank
- * order. Unsupported mappings fail on the host; they never produce a context
- * with a silently disabled transport.
+ * A5's URMA workspace is indexed in communicator-rank order; CommContext's
+ * rank map translates arbitrary domain subsets/reorderings to that index.
  *
  * @param h                Allocated base communicator handle.
  * @param rank_ids         Base-communicator rank ids in domain rank order.
@@ -213,14 +211,11 @@ int comm_derive_context(
 /**
  * Allocate a fresh per-rank symmetric window pool for a subset of ranks.
  *
- * Unlike comm_alloc_windows() which allocates the single base pool once at
- * bootstrap, this allocates an additional pool for a dynamically-derived
- * domain (a subset of the base communicator).  Multiple concurrent
+ * Backends may allocate an additional pool or derive a slice from the base
+ * communicator's persistent pool. Multiple concurrent
  * allocations are disambiguated by `allocation_id`, which is mixed into
  * every internal handshake / barrier filename so a second allocation
  * does not collide with the first.
- * The A5 backend currently accepts only dense-prefix rank mappings for the
- * same URMA indexing reason documented on comm_derive_context().
  *
  * This is a collective operation across the subset only: every
  * participating chip must call this with matching arguments; non-members
@@ -228,9 +223,10 @@ int comm_derive_context(
  * subset, so the parent (orchestrator) only needs to dispatch and wait
  * for completion — it does not need to broker the cross-rank handshake.
  *
- * On HCCL this performs aclrtMalloc + the same Path-D IPC pattern as
- * comm_alloc_windows but on a fresh per-allocation buffer.  On sim it
- * shm_opens a fresh POSIX shm scoped by `allocation_id`.
+ * A2/A3 HCCL performs the same Path-D IPC pattern as comm_alloc_windows on a
+ * fresh buffer. A5 derives a slice from its communicator-lifetime arena so
+ * its URMA memory registration and channels cannot outlive their memory. On
+ * sim this shm_opens a fresh POSIX shm scoped by `allocation_id`.
  *
  * Resources allocated here remain owned by the base handle; either an
  * explicit comm_release_domain_windows() or final comm_destroy(base)
@@ -245,6 +241,9 @@ int comm_derive_context(
  *                                domain order (length rank_count).
  * @param rank_count              Number of subset members.
  * @param domain_rank             This caller's dense rank in the subset.
+ * @param window_offset           Offset in a communicator-owned persistent
+ *                                arena, for backends that derive domain views.
+ *                                Backends with allocation-owned windows ignore it.
  * @param window_size             Bytes per rank.  Backend must allocate
  *                                exactly this size; no auto-rounding.
  * @param device_ctx_out          Receives a device pointer to a new
@@ -256,7 +255,7 @@ int comm_derive_context(
  */
 int comm_alloc_domain_windows(
     CommHandle h, uint64_t allocation_id, const uint32_t *rank_ids, size_t rank_count, uint32_t domain_rank,
-    size_t window_size, uint64_t *device_ctx_out, uint64_t *local_window_base_out
+    size_t window_offset, size_t window_size, uint64_t *device_ctx_out, uint64_t *local_window_base_out
 );
 
 /**
