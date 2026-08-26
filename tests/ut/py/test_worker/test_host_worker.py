@@ -5766,7 +5766,8 @@ class TestUnreclaimedDeviceStateIsNeverSilent:
         request_buf = request.buf
         assert request_buf is not None
         worker_mod._COMM_INIT_HEADER.pack_into(request_buf, 0, 1, 2, 0)
-        request_buf[worker_mod._COMM_INIT_HEADER.size :] = path_bytes
+        path_start = worker_mod._COMM_INIT_HEADER.size
+        request_buf[path_start : path_start + len(path_bytes)] = path_bytes
         mailbox = memoryview(bytearray(worker_mod._OFF_ARGS + worker_mod._CTRL_SHM_NAME_BYTES))
         encoded_name = request.name.encode()
         mailbox[worker_mod._OFF_ARGS : worker_mod._OFF_ARGS + len(encoded_name)] = encoded_name

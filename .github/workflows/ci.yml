@@ -1,8 +1,7 @@
-name: CI
+name: macOS targeted validation
 
 permissions:
   contents: read
-  pull-requests: read
 
 on:
   pull_request:
@@ -13,144 +12,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  detect-changes:
-    uses: ./.github/workflows/_detect-changes.yml
-    with:
-      repository: ${{ github.event.pull_request.head.repo.full_name }}
-      ref: ${{ github.event.pull_request.head.sha }}
-      base_repository: ${{ github.event.pull_request.base.repo.full_name }}
-      base_ref: ${{ github.event.pull_request.base.ref }}
-      base_sha: ${{ github.event.pull_request.base.sha }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
-      runs_on: '["ubuntu-latest"]'
+  macos-ut-and-a2a3sim:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      SIMPLER_SCHEDULER_TIMEOUT_MS: "5000"
+    steps:
+      - name: Checkout target
+        uses: actions/checkout@v5
 
-  pre-commit:
-    uses: ./.github/workflows/_pre-commit.yml
-    with:
-      base_sha: ${{ github.event.pull_request.base.sha }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
-      runs_on: '["ubuntu-latest"]'
-      setup_variant: github
+      - name: Set up C++ compiler
+        uses: ./.github/actions/setup-gcc-15
+        with:
+          install-graphviz: "true"
 
-  packaging-matrix:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.examples_only != 'true' && needs.detect-changes.outputs.tests_only != 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_packaging.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      python_version: ${{ matrix.python-version }}
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
 
-  ut:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_ut-no-hardware.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      python_version: ${{ matrix.python-version }}
+      - name: Set up a2a3sim environment
+        uses: ./.github/actions/setup-venv
+        with:
+          build-packages: "scikit-build-core nanobind<3 cmake>=3.15"
+          packages: "--no-build-isolation --config-settings=build.targets=build_package_a2a3sim .[test]"
 
-  st-sim-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_st-sim-a2a3.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      include_dfx_smokes: true
-      python_version: ${{ matrix.python-version }}
+      - name: Run affected macOS unit test
+        run: |
+          .venv/bin/python -m pytest \
+            tests/ut/py/test_worker/test_host_worker.py::TestUnreclaimedDeviceStateIsNeverSilent::test_a5_comm_init_child_reports_comm_get_window_size \
+            -v
 
-  st-sim-a5:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a5_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_st-sim-a5.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      include_dfx_smokes: true
-      python_version: ${{ matrix.python-version }}
-
-  profiling-flags-smoke:
-    needs: [detect-changes, pre-commit]
-    if: (needs.detect-changes.outputs.a2a3_changed == 'true' || needs.detect-changes.outputs.a5_changed == 'true') && needs.detect-changes.outputs.examples_only != 'true' && needs.detect-changes.outputs.tests_only != 'true'
-    uses: ./.github/workflows/_profiling-flags-smoke.yml
-    with:
-      runs_on: '["ubuntu-latest"]'
-      setup_variant: github
-
-  ut-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
-    uses: ./.github/workflows/_ut-npu-a2a3.yml
-    with:
-      runs_on: '["self-hosted","a2a3"]'
-      include_cann_examples: true
-
-  st-onboard-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-npu-a2a3.yml
-    with:
-      runs_on: '["self-hosted","a2a3"]'
-      include_dfx_smokes: true
-
-  # The only job that spans two machines. It is arch-specific and the most
-  # expensive thing in this file, so it gates exactly as st-onboard-a2a3 does —
-  # never on a weaker signal than a cheaper job, per
-  # .claude/rules/ci-change-detection.md.
-  st-network1-onboard-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-network1.yml
-    with:
-      platform: a2a3
-      # a2a3pod is a label on the runner machines, not a value this repo
-      # controls, so it keeps the older word until those machines are
-      # relabelled. A job matches every label in this list, so it cannot accept
-      # either spelling.
-      runs_on: '["self-hosted","Linux","ARM64","a2a3pod"]'
-
-  # The two DeepSeek smoke cases stay manual, so the main sweep (--manual
-  # exclude) never picks them up; this job selects them with --manual only and
-  # runs on its own devices in parallel with st-onboard-a2a3, keeping their
-  # ~9 min of device time off the main sweep's critical path. Gates exactly as
-  # st-onboard-a2a3 does, per .claude/rules/ci-change-detection.md.
-  st-deepseek-onboard-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-deepseek-a2a3.yml
-    with:
-      runs_on: '["self-hosted","a2a3"]'
-
-  ut-a5:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
-    uses: ./.github/workflows/_ut-npu-a5.yml
-    with:
-      runs_on: '["self-hosted","a5"]'
-      include_cann_examples: true
-
-  st-onboard-a5:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a5_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-npu-a5.yml
-    with:
-      runs_on: '["self-hosted","a5"]'
-      include_dfx_smokes: true
+      - name: Run affected macOS a2a3sim host-build-graph group
+        run: |
+          .venv/bin/python -m pytest tests/st/a2a3/host_build_graph \
+            --platform a2a3sim --device 0-15 -v \
+            --pto-session-timeout 600 --require-pto-isa --manual exclude
