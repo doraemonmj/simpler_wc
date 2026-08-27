@@ -737,8 +737,8 @@ static void ensure_sdma_workspace(CommHandle h) {
     if (h->sdma_workspace) return;
     h->sdma_workspace = std::make_unique<pto::comm::sdma::SdmaWorkspaceManager>();
     if (h->sdma_workspace->Init()) {
-        h->host_ctx.workSpace = reinterpret_cast<uint64_t>(h->sdma_workspace->GetWorkspaceAddr());
-        h->host_ctx.workSpaceSize = 16 * 1024;
+        h->host_ctx.sdmaWorkSpace = reinterpret_cast<uint64_t>(h->sdma_workspace->GetWorkspaceAddr());
+        h->host_ctx.sdmaWorkSpaceSize = 16 * 1024;
     } else {
         // SDMA workspace initialization failed - this may occur due to:
         // 1. Missing ACL symbols in libopapi.so (CANN version compatibility)
@@ -997,10 +997,10 @@ static int domain_alloc_via_ipc(
     out->own_handle = handle;
     // Build a host-side CommContext for the subset and upload it as device_ctx.
     // PTO-ISA async SDMA ops (SdmaTget) read the scratch workspace off
-    // CommContext::workSpace.  The dynamic-domain path does not go through
+    // CommContext::sdmaWorkSpace.  The dynamic-domain path does not go through
     // comm_alloc_windows, so provision the workspace here; without it a
-    // freshly zero-initialized per-domain ctx would leave workSpace == 0 and
-    // those kernels early-return on the workSpace guard.
+    // freshly zero-initialized per-domain ctx would leave sdmaWorkSpace == 0
+    // and those kernels early-return on the sdmaWorkSpace guard.
     ensure_sdma_workspace(h);
 
     uint64_t domain_sdma_workspace_addr = 0;
@@ -1013,8 +1013,8 @@ static int domain_alloc_via_ipc(
     ctx.rankId = domain_rank;
     ctx.rankNum = static_cast<uint32_t>(subset_n);
     ctx.winSize = aligned_size;
-    ctx.workSpace = domain_sdma_workspace_addr;
-    ctx.workSpaceSize = domain_sdma_workspace_size;
+    ctx.sdmaWorkSpace = domain_sdma_workspace_addr;
+    ctx.sdmaWorkSpaceSize = domain_sdma_workspace_size;
     ctx.windowsIn[my_dr] = reinterpret_cast<uint64_t>(localBuf);
     // Import each peer's shareable handle onto our device; see the symmetry
     // note in alloc_windows_via_ipc (one win_size, shared chip granularity).
@@ -1178,8 +1178,8 @@ extern "C" int comm_derive_context(
     }
 
     CommContext ctx{};
-    ctx.workSpace = h->host_ctx.workSpace;
-    ctx.workSpaceSize = h->host_ctx.workSpaceSize;
+    ctx.sdmaWorkSpace = h->host_ctx.sdmaWorkSpace;
+    ctx.sdmaWorkSpaceSize = h->host_ctx.sdmaWorkSpaceSize;
     ctx.urmaWorkSpace = h->host_ctx.urmaWorkSpace;
     ctx.urmaWorkSpaceSize = h->host_ctx.urmaWorkSpaceSize;
     ctx.urmaWindowOffset = window_offset;

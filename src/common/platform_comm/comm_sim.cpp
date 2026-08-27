@@ -380,8 +380,8 @@ extern "C" int comm_alloc_windows(CommHandle h, size_t win_size, uint64_t *devic
     // cross-rank address-agreement assert is specifically an HCCL-GVA
     // invariant and is not expected to hold (nor intended to run) under sim.
     auto &ctx = h->host_ctx;
-    ctx.workSpace = 0;
-    ctx.workSpaceSize = 0;
+    ctx.sdmaWorkSpace = 0;
+    ctx.sdmaWorkSpaceSize = 0;
     ctx.rankId = static_cast<uint32_t>(h->rank);
     ctx.rankNum = static_cast<uint32_t>(h->nranks);
     ctx.winSize = win_size;
@@ -456,8 +456,8 @@ extern "C" int comm_derive_context(
 
     auto *ctx = new (std::nothrow) CommContext{};
     if (ctx == nullptr) return -1;
-    ctx->workSpace = h->host_ctx.workSpace;
-    ctx->workSpaceSize = h->host_ctx.workSpaceSize;
+    ctx->sdmaWorkSpace = h->host_ctx.sdmaWorkSpace;
+    ctx->sdmaWorkSpaceSize = h->host_ctx.sdmaWorkSpaceSize;
     ctx->rankId = domain_rank;
     ctx->rankNum = static_cast<uint32_t>(rank_count);
     ctx->winSize = window_size;
@@ -636,8 +636,8 @@ extern "C" int comm_alloc_domain_windows(
     auto *win_base = static_cast<uint8_t *>(base) + HEADER_SIZE;
     alloc->host_ctx = std::make_unique<CommContext>();
     auto &ctx = *alloc->host_ctx;
-    ctx.workSpace = 0;
-    ctx.workSpaceSize = 0;
+    ctx.sdmaWorkSpace = 0;
+    ctx.sdmaWorkSpaceSize = 0;
     ctx.rankId = domain_rank;
     ctx.rankNum = static_cast<uint32_t>(rank_count);
     ctx.winSize = window_size;

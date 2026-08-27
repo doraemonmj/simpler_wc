@@ -24,7 +24,7 @@ directories. Only the transfer kernel and the orchestration change:
 | ---- | ---- | ---- |
 | Transfer kernel | `kernel_urma_tget_async.cpp` | `kernel_sdma_tget_async.cpp` |
 | Completion header | `backend/urma/urma_completion_kernel.h` | `backend/sdma/sdma_completion_kernel.h` |
-| Workspace field | `urmaWorkSpace` | `workSpace` |
+| Workspace field | `urmaWorkSpace` | `sdmaWorkSpace` |
 
 Read them side by side and the transport is the only variable — which is
 exactly what you want when deciding which one a workload should use.
@@ -32,7 +32,7 @@ exactly what you want when deciding which one a workload should use.
 ## SDMA and URMA are both available
 
 The A5 host runtime provisions both workspaces when it creates a communication
-domain. `CommContext` keeps the SDMA workspace in the original `workSpace`
+domain. `CommContext` keeps the SDMA workspace in the leading `sdmaWorkSpace`
 pair and the URMA workspace in the appended `urmaWorkSpace` pair, so both
 engines are usable from the same build and domain.
 

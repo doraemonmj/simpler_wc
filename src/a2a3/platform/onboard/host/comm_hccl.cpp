@@ -373,11 +373,11 @@ static aclError release_domain_windows(DomainAllocation *alloc) {
 static aclError release_base_windows(CommHandle h) {
     aclError first_error = release_vmm_windows(&h->base_peer_windows);
     record_first_error(release_vmm_window(&h->base_local_window), &first_error);
-    const uint64_t workspace = h->host_ctx.workSpace;
-    const uint64_t workspace_size = h->host_ctx.workSpaceSize;
+    const uint64_t workspace = h->host_ctx.sdmaWorkSpace;
+    const uint64_t workspace_size = h->host_ctx.sdmaWorkSpaceSize;
     h->host_ctx = CommContext{};
-    h->host_ctx.workSpace = workspace;
-    h->host_ctx.workSpaceSize = workspace_size;
+    h->host_ctx.sdmaWorkSpace = workspace;
+    h->host_ctx.sdmaWorkSpaceSize = workspace_size;
     return first_error;
 }
 

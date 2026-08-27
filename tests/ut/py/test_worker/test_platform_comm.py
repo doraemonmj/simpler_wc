@@ -58,8 +58,8 @@ _COMM_MAX_RANK_NUM = 64
 
 class _CommContext(ctypes.Structure):
     _fields_ = [
-        ("workSpace", ctypes.c_uint64),
-        ("workSpaceSize", ctypes.c_uint64),
+        ("sdmaWorkSpace", ctypes.c_uint64),
+        ("sdmaWorkSpaceSize", ctypes.c_uint64),
         ("rankId", ctypes.c_uint32),
         ("rankNum", ctypes.c_uint32),
         ("winSize", ctypes.c_uint64),
@@ -170,7 +170,7 @@ def _rank_entry(
         result["local_base"] = int(local_base)
         result["rank_id"] = int(host_ctx.rankId)
         result["rank_num"] = int(host_ctx.rankNum)
-        result["sdma_workspace"] = int(host_ctx.workSpace)
+        result["sdma_workspace"] = int(host_ctx.sdmaWorkSpace)
         result["urma_workspace"] = int(host_ctx.urmaWorkSpace)
 
         # A derived context shifts its visible windows while URMA remains

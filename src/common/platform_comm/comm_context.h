@@ -38,8 +38,8 @@
 static constexpr uint32_t COMM_MAX_RANK_NUM = 64;
 
 struct CommContext {
-    uint64_t workSpace;
-    uint64_t workSpaceSize;
+    uint64_t sdmaWorkSpace;
+    uint64_t sdmaWorkSpaceSize;
 
     uint32_t rankId;
     uint32_t rankNum;
@@ -66,8 +66,9 @@ struct CommContext {
 //
 //   1. The pto-isa repo carries a parallel declaration (HcclDeviceContext)
 //      that must be prefix-compatible with this struct -- pto-isa kernels read
-//      windowsIn[]/winSize/rankId via that mirror. Any insert/reorder before
-//      the simpler-owned tail that is not matched in pto-isa silently shifts
+//      windowsIn[]/winSize/rankId via that mirror. Field names may differ, but
+//      any insert/reorder before the simpler-owned tail that is not matched in
+//      pto-isa silently shifts
 //      the device-side field offsets and corrupts MTE2 reads. The locks below
 //      pin our side; pto-isa should add its own mirror asserts.
 //
@@ -81,8 +82,8 @@ struct CommContext {
 static_assert(std::is_trivially_copyable_v<CommContext>, "CommContext must remain trivially copyable");
 static_assert(std::is_standard_layout_v<CommContext>, "CommContext must remain standard layout");
 static_assert(sizeof(CommContext) == 1336, "CommContext size shifted");
-static_assert(offsetof(CommContext, workSpace) == 0, "CommContext layout drift");
-static_assert(offsetof(CommContext, workSpaceSize) == 8, "CommContext layout drift");
+static_assert(offsetof(CommContext, sdmaWorkSpace) == 0, "CommContext layout drift");
+static_assert(offsetof(CommContext, sdmaWorkSpaceSize) == 8, "CommContext layout drift");
 static_assert(offsetof(CommContext, rankId) == 16, "CommContext layout drift");
 static_assert(offsetof(CommContext, rankNum) == 20, "CommContext layout drift");
 static_assert(offsetof(CommContext, winSize) == 24, "CommContext layout drift");

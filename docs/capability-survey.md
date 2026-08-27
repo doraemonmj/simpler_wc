@@ -241,7 +241,7 @@ CQEs checking the owner bit, advances the tail and rings the doorbell
 submits `TGET_ASYNC`/`TPUT_ASYNC<DmaEngine::URMA>` with 256 MB chunking. The
 pinned PTO-ISA defines `PTO_URMA_SUPPORTED` for DAV_3510. The host provisions
 the process-global SDMA workspace and communicator-scoped URMA workspace before
-uploading `CommContext`; the original `workSpace` pair remains the SDMA ABI,
+uploading `CommContext`; the leading `sdmaWorkSpace` pair carries SDMA,
 and the appended `urmaWorkSpace` pair carries URMA. A derived context also
 carries `urmaWindowOffset`, translating its domain-local window offsets back
 to the registered base MR. URMA metadata is indexed by communicator rank, and
