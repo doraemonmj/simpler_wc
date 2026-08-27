@@ -129,6 +129,10 @@ struct AsyncPollResult {
     ChipTaskSlotState *failed_slot_state{nullptr};
 };
 
+inline uint32_t async_poll_tasks_processed(const AsyncPollResult &result) {
+    return result.resolved > 0 ? static_cast<uint32_t>(result.resolved) : 0;
+}
+
 inline const char *async_engine_name(AsyncEngine engine) {
     switch (engine) {
     case ASYNC_ENGINE_SDMA:

@@ -45,10 +45,12 @@ available.
   `chip_swimlane_records.json` with `deps.json` from
   [`dep_gen`](dep-gen.md) at post-process time; see
   [§3.5](#35-dependency-arrows-from-dep_gen).
-- **AICPU scheduler phases** — per-iteration breakdown into seven
-  mutually time-exclusive **outer** phases (`complete` / `async_poll`
-  / `dispatch` / `release` / `dummy` / `early_dispatch` / `drain`), plus
-  `resolve`, `drain_prepare`, and `drain_publish` **inner** phases. `resolve`
+- **AICPU scheduler phases** — per-iteration breakdown into mutually
+  time-exclusive **outer** phases (`complete` / `async_poll` / `dispatch` /
+  `release` / `dummy` / `early_dispatch` / `drain`), plus nested phases.
+  In `tensormap_and_ringbuffer`, `resolve` is nested within `complete` or
+  `dummy`; in `host_build_graph`, `resolve`, `async_poll`, and `dummy` are
+  standalone, mutually exclusive phases on the dedicated P thread. `resolve`
   is rendered on a sibling scheduler sub-lane with the same `Sched_N` label,
   while the drain sub-phases are nested within their `drain` bar,
   and two **separate-lane**
@@ -257,13 +259,13 @@ field but render differently in Perfetto:
 | Phase | Role | Lane | `tasks_processed` semantic |
 | ----- | ---- | ---- | -------------------------- |
 | `complete` | outer | sched (pid=2) | FIN'd subtasks + sub-block retires this iter |
-| `async_poll` | outer | sched | async-wait (SDMA/RoCE/URMA/CCU) subtasks completed this iter; split from `complete` |
+| `async_poll` | outer | sched | async-wait completions resolved; zero means polling consumed CPU without completing work |
 | `dispatch` | outer | sched | subtasks published this iter |
 | `release` | outer | sched | deferred-release slots drained this iter |
 | `dummy` | outer | sched | `dummy_ready_queue` entries handled this iter (explicit dummies and false-predicate tasks) |
 | `early_dispatch` | outer | sched | blocks staged by speculative early-dispatch this pass |
 | `drain` | outer | sched | blocks staged by this thread's global sync-start drain pass |
-| `resolve` | inner | sched sub-lane, same `Sched_N` label as its outer lane | consumers visited in `on_task_complete` |
+| `resolve` | inner (TMR); P-thread outer (HBG) | sched sub-lane, same `Sched_N` label as its outer lane | consumers visited in `on_task_complete` (TMR); completed SPSC slots (HBG) |
 | `drain_prepare` | inner | sched, nested in `drain` | subtasks prepared for global sync-start publication |
 | `drain_publish` | inner | sched, nested in `drain` | subtasks published during global sync-start staging |
 | `dummy_task` | separate-lane | Worker View AICPU_N (pid=4) | one dummy entering `on_task_complete()`; full identity is in `task_id` |
@@ -275,12 +277,23 @@ from `g_orch_fanin_cycle` in the device-log orch breakdown (the
 `fanin` line) instead.
 
 Outer phases are mutually time-exclusive within an iter. The converter renders
-`resolve` on a sibling `Sched_N` tid so flow arrows attach to the outer
-`complete`/`dummy` lane; `drain_prepare` and `drain_publish` remain on the
+`resolve` on a sibling `Sched_N` tid. In `tensormap_and_ringbuffer` it is
+time-contained by the outer `complete`/`dummy` lane; in `host_build_graph` it
+is a standalone P-thread bar. `drain_prepare` and `drain_publish` remain on the
 scheduler lane and are time-contained by `drain`. Separate-lane phases are
 routed to a different lane by the converter
 (Worker View AICPU_N), so they never overlap visually with the sched lane
 bars even when their timestamps fall inside an outer span.
+
+On the HBG P thread, consecutive empty async-wait polls are compacted into one
+`async_poll(0)` record. Its duration is the exact sum of time spent inside the
+poll calls, anchored at the point where the aggregate is flushed; it is not a
+wall-clock envelope over the intervening loop bookkeeping. The aggregate is
+flushed before `resolve` or `dummy`, when a poll resolves work or reports an
+error, and when P exits. This keeps polling cost visible without exporting one
+record per spin. A non-zero `tasks_processed` counts every resolved async-wait
+entry, including internal Graph nodes, rather than only host-submitted stream
+tasks.
 
 Legacy phases (`scan` / `poll` / `idle` / `fanout` / `prestage`)
 are still parsed for old captures but current a2a3/a5 builds no
@@ -376,6 +389,11 @@ mtime and runs `sched_overhead_analysis` automatically. The
 report is printed to stdout; it correlates AICPU phase records
 with the device log to attribute each scheduler iteration to a
 specific overhead source.
+
+The scheduler-budget parser counts every mutually exclusive outer phase and
+standalone HBG P-thread `resolve` bars. It excludes only `resolve` records whose
+timestamps are contained by a TMR `complete` or `dummy` parent, preventing the
+nested TMR work from being counted twice.
 
 ### 3.4 Adding human-readable names
 
@@ -677,10 +695,11 @@ Both architectures use split phase streams:
 
 - `ChipSwimlaneAicpuSchedPhaseRecord` (64 B) — one record per **emitted
   phase**, not per scheduler iteration: a single iteration routinely emits
-  several (e.g. Complete, AsyncPoll, Dispatch, Release, plus the Resolve
-  inner phase). `ChipSwimlaneSchedPhaseKind` spans the outer phases
+  several (e.g. Complete, AsyncPoll, Dispatch, Release, plus Resolve).
+  `ChipSwimlaneSchedPhaseKind` spans the outer phases
   (Complete, Dispatch, Release, Dummy, EarlyDispatch, AsyncPoll, Drain,
-  GraphPrepare), the inner ones (Resolve, DrainPrepare, DrainPublish) and
+  GraphPrepare), runtime-specific Resolve, the inner drain phases
+  (DrainPrepare, DrainPublish), and
   the separate-lane markers (DummyTask, PredicatedSkip) — see §3.2 for how
   each is rendered. Carries loop_iter + tasks_processed + pop_hit /
   pop_miss deltas and queue-depth snapshots.

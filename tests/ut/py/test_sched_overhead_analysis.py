@@ -219,3 +219,51 @@ def test_parse_scheduler_attributes_spmd_task_to_final_finish_thread():
     assert threads[1]["finishes"] == 1
     assert threads[1]["tasks_per_loop"] == 1
     assert threads[1]["finishes_per_loop"] == 1
+
+
+def test_parse_scheduler_counts_hbg_p_thread_standalone_phases():
+    data = {
+        "aicpu_scheduler_phases": [
+            [
+                {"phase": "resolve", "start_time_us": 1.0, "end_time_us": 2.0, "loop_iter": 7},
+                {"phase": "async_poll", "start_time_us": 3.0, "end_time_us": 5.0, "loop_iter": 9},
+                {"phase": "dummy", "start_time_us": 6.0, "end_time_us": 7.0, "loop_iter": 9},
+            ]
+        ]
+    }
+
+    threads = parse_scheduler_from_json_phases(data)
+
+    assert threads[0]["resolve_us"] == 1.0
+    assert threads[0]["async_poll_us"] == 2.0
+    assert threads[0]["dummy_us"] == 1.0
+    assert threads[0]["idle_us"] == 2.0
+    assert threads[0]["total_us"] == 6.0
+    assert threads[0]["loops"] == 9
+
+
+def test_parse_scheduler_does_not_double_count_tmr_nested_resolve():
+    data = {
+        "aicpu_scheduler_phases": [
+            [
+                {
+                    "phase": "complete",
+                    "start_time_us": 1.0,
+                    "end_time_us": 5.0,
+                    "loop_iter": 3,
+                    "tasks_processed": 1,
+                },
+                {"phase": "resolve", "start_time_us": 2.0, "end_time_us": 4.0, "loop_iter": 3},
+                {"phase": "dummy", "start_time_us": 6.0, "end_time_us": 9.0, "loop_iter": 4},
+                {"phase": "resolve", "start_time_us": 7.0, "end_time_us": 8.0, "loop_iter": 4},
+            ]
+        ]
+    }
+
+    threads = parse_scheduler_from_json_phases(data)
+
+    assert threads[0]["complete_us"] == 4.0
+    assert threads[0]["dummy_us"] == 3.0
+    assert threads[0]["resolve_us"] == 0.0
+    assert threads[0]["idle_us"] == 1.0
+    assert threads[0]["total_us"] == 8.0
