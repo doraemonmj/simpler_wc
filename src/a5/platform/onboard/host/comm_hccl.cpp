@@ -788,15 +788,18 @@ static bool init_urma_workspace(
         return false;
     }
 
-    auto manager = std::make_unique<pto::comm::urma::UrmaWorkspaceManager>();
-    if (!manager->Init(h->hccl_comm, rank_id, rank_count, symmetric_addr, symmetric_size)) {
+    // Transfer ownership before Init: it may register HCCL memory or acquire
+    // channels before a later allocation throws. The handle must retain that
+    // partial state until HcclCommDestroy runs.
+    workspace = std::make_unique<pto::comm::urma::UrmaWorkspaceManager>();
+    const bool initialized = workspace->Init(h->hccl_comm, rank_id, rank_count, symmetric_addr, symmetric_size);
+    if (!initialized) {
         LOG_WARN(
             "[comm rank %d] URMA workspace init failed (rank_id=%u rank_count=%u size=%llu)", h->rank, rank_id,
             rank_count, static_cast<unsigned long long>(symmetric_size)
         );
         return false;
     }
-    workspace = std::move(manager);
     return true;
 }
 
@@ -1442,7 +1445,6 @@ extern "C" int comm_destroy(CommHandle h) try {
         if (alloc->local_buf && !alloc->arena_slice) release_own_vmm_window(alloc->local_buf, alloc->own_handle);
     }
     h->domain_allocations.clear();
-    reset_base_urma_workspace(h);
     if (h->hccl_comm) {
         HcclResult hret = hccl_comm_destroy(h->hccl_comm);
         if (hret != HCCL_SUCCESS) {
@@ -1450,6 +1452,9 @@ extern "C" int comm_destroy(CommHandle h) try {
             if (rc == 0) rc = -1;
         }
     }
+    // UrmaWorkspaceManager owns memory registered with the communicator and
+    // channel-derived state, so its Finalize must run after HCCL teardown.
+    reset_base_urma_workspace(h);
 
     // NOTE: we do NOT destroy h->stream — it is caller-owned.
     // We also do NOT call aclrtResetDevice / aclFinalize here.  Device/ACL
