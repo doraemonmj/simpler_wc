@@ -1042,6 +1042,9 @@ def _run_swimlane_converter(
     input_path: Path | None = None,
     func_names_path: Path | None = None,
     enable_overhead: bool = False,
+    *,
+    dispatch: str | None = None,
+    output_path: Path | None = None,
 ) -> None:
     """Invoke the bundled swimlane converter as a subprocess.
 
@@ -1063,6 +1066,10 @@ def _run_swimlane_converter(
         cmd.append(str(input_path))
     if func_names_path is not None:
         cmd += ["--func-names", str(func_names_path)]
+    if dispatch is not None:
+        cmd += ["--dispatch", dispatch]
+    if output_path is not None:
+        cmd += ["--output", str(output_path)]
     if enable_overhead:
         cmd.append("--overhead")
     try:
@@ -1082,6 +1089,23 @@ def _sanitize_for_filename(s: str) -> str:
     return "".join(c if c.isalnum() or c in "._-" else "_" for c in s)
 
 
+def _rank_capture_dirs(output_prefix: Path) -> list[Path]:
+    """Return deterministic ``rankN/dN`` capture roots below a case prefix."""
+    captures = []
+    rank_dirs = sorted(
+        (path for path in output_prefix.glob("rank*") if path.is_dir() and path.name.removeprefix("rank").isdigit()),
+        key=lambda path: int(path.name.removeprefix("rank")),
+    )
+    for rank_dir in rank_dirs:
+        captures.extend(
+            sorted(
+                (path for path in rank_dir.glob("d*") if path.is_dir() and path.name.removeprefix("d").isdigit()),
+                key=lambda path: int(path.name.removeprefix("d")),
+            )
+        )
+    return captures
+
+
 def _convert_case_swimlane(
     case_label: str,
     output_prefix: Path,
@@ -1095,6 +1119,46 @@ def _convert_case_swimlane(
     import logging  # noqa: PLC0415
 
     logger = logging.getLogger(__name__)
+    rank_dirs = sorted(
+        (path for path in output_prefix.glob("rank*") if path.is_dir() and path.name.removeprefix("rank").isdigit()),
+        key=lambda path: int(path.name.removeprefix("rank")),
+    )
+    if rank_dirs:
+        dispatch_sets = [
+            {path.name for path in rank_dir.glob("d*") if (path / "chip_swimlane_records.json").is_file()}
+            for rank_dir in rank_dirs
+        ]
+        if not dispatch_sets or any(dispatches != dispatch_sets[0] for dispatches in dispatch_sets[1:]):
+            detail = ", ".join(
+                f"{rank_dir.name}={sorted(dispatches)}"
+                for rank_dir, dispatches in zip(rank_dirs, dispatch_sets, strict=True)
+            )
+            logger.warning(
+                f"[{case_label}] refusing to pair asymmetric local capture indexes under {output_prefix}: {detail}"
+            )
+            return
+        common_dispatches = sorted(dispatch_sets[0], key=lambda name: int(name.removeprefix("d")))
+        if not common_dispatches:
+            logger.warning(f"[{case_label}] no complete Rank capture is present under {output_prefix}")
+            return
+
+        for dispatch in common_dispatches:
+            if callable_spec:
+                mapping = _extract_name_map(callable_spec)
+                safe_label = _sanitize_for_filename(case_label)
+                for rank_dir in rank_dirs:
+                    _dump_name_map(mapping, rank_dir / dispatch / f"name_map_{safe_label}.json")
+            output_path = None
+            if len(common_dispatches) > 1:
+                output_path = output_prefix / f"l3_swimlane_{dispatch}.json"
+            _run_swimlane_converter(
+                input_path=output_prefix,
+                enable_overhead=enable_overhead,
+                dispatch=dispatch,
+                output_path=output_path,
+            )
+        return
+
     perf_file = output_prefix / "chip_swimlane_records.json"
     if not perf_file.exists():
         logger.warning(f"[{case_label}] {perf_file} not produced; skipping conversion")
@@ -1205,12 +1269,23 @@ def finalize_diagnostic_outputs(
 ) -> None:
     """Run the postprocessors shared by SceneTest and standalone drivers."""
     prefix = Path(output_prefix)
+    rank_capture_dirs = _rank_capture_dirs(prefix)
     if chip_swimlane:
         _convert_case_swimlane(case_label, prefix, callable_spec=callable_spec, enable_overhead=swimlane_overhead)
     if dep_gen:
-        _graph_case_dep_gen(case_label, prefix, callable_spec=callable_spec)
+        dep_targets = [path for path in rank_capture_dirs if (path / "deps.json").is_file()]
+        if dep_targets:
+            for target in dep_targets:
+                _graph_case_dep_gen(case_label, target, callable_spec=callable_spec)
+        else:
+            _graph_case_dep_gen(case_label, prefix, callable_spec=callable_spec)
     if scope_stats:
-        _plot_case_scope_stats(case_label, prefix)
+        scope_targets = [path for path in rank_capture_dirs if (path / "scope_stats" / "scope_stats.jsonl").is_file()]
+        if scope_targets:
+            for target in scope_targets:
+                _plot_case_scope_stats(case_label, target)
+        else:
+            _plot_case_scope_stats(case_label, prefix)
 
 
 def _name_failing_case(exc: BaseException, cls_name: str, case_name: str) -> None:
@@ -1819,18 +1894,6 @@ class SceneTestCase:
         enable_scope_stats=False,
         output_prefix="",
     ):
-        # Defensive belt-and-braces: the pytest dispatcher and run_module both
-        # block --enable-chip-swimlane for L3 at the CLI boundary. Catch any code
-        # path that reaches here with the flag on anyway (direct API use,
-        # future refactors) so we fail loud rather than produce garbage perf
-        # files. Lift once the runtime embeds device_id in the perf filename.
-        if enable_chip_swimlane:
-            raise NotImplementedError(
-                "L3 profiling is not supported yet (multi-chip-process perf "
-                "filename collision). Gate at the CLI level in "
-                "conftest.pytest_collection_modifyitems / scene_test.run_module."
-            )
-
         params = case.get("params", {})
         config_dict = case.get("config", {})
         skip_golden = skip_golden or bool(case.get("skip_golden", self.SKIP_GOLDEN))
@@ -2125,6 +2188,9 @@ class SceneTestCase:
         parser.add_argument(
             "--level",
             type=int,
+            # Standalone child mode intentionally excludes NETWORK/L4. If L4
+            # is added, mirror the pytest-side multi-Rank swimlane validation
+            # until output names are also unique across parent Workers.
             choices=[2, 3],
             default=None,
             help="Only run classes with this _st_level (child-mode marker when combined with --runtime)",
@@ -2253,20 +2319,6 @@ class SceneTestCase:
         selected_by_cls: dict[type, list[dict]] = {}
         for cls, case in selected:
             selected_by_cls.setdefault(cls, []).append(case)
-
-        # L3 profiling not supported yet (multi-chip-process filename collision).
-        # Mirror the pytest-side guard so standalone users get the same early-fail.
-        if args.enable_chip_swimlane:
-            l3_classes = sorted(cls.__name__ for cls in selected_by_cls if cls._st_level == 3)
-            if l3_classes:
-                print(
-                    f"ERROR: --enable-chip-swimlane is not supported for L3 tests yet — "
-                    f"multi-chip-process filename collision unresolved. "
-                    f"L3 classes selected: {', '.join(l3_classes)}. "
-                    f"Either drop --enable-chip-swimlane or scope to L2 with --level 2.",
-                    file=sys.stderr,
-                )
-                sys.exit(2)
 
         # Child mode: both --runtime and --level set. Run inline without
         # spawning further subprocesses; this is the path dispatcher

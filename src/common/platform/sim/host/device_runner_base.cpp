@@ -29,6 +29,7 @@
 #include "chip_callable_layout.h"
 #include "common/host_api.h"
 #include "cpu_sim_context.h"
+#include "host/profiling_output_layout.h"
 #include "host/raii_scope_guard.h"
 #include "task_args_wire.h"
 #include "utils/elf_build_id.h"
@@ -743,8 +744,14 @@ HostPhaseRecordPool *SimDeviceRunnerBase::host_phase_pool_arm(bool producer_want
     }
     if (!swimlane_wants_records) return pool;
 
-    // Only the chip-swimlane reader places these records against device
-    // timestamps, so only it needs the two clocks anchored.
+    begin_clock_correlation_session_if_needed();
+    return pool;
+}
+
+void SimDeviceRunnerBase::begin_clock_correlation_session_if_needed() noexcept {
+    if (chip_swimlane_level_ != ChipSwimlaneLevel::ORCH_PHASES || chip_swimlane_collector_.clock_correlation_active()) {
+        return;
+    }
     try {
         clock_correlation_provider_ = simpler::dfx::make_clock_correlation_provider();
         chip_swimlane_collector_.begin_clock_correlation_session(
@@ -765,7 +772,10 @@ HostPhaseRecordPool *SimDeviceRunnerBase::host_phase_pool_arm(bool producer_want
             chip_swimlane_collector_.finish_clock_correlation_session();
         }
     }
-    return pool;
+}
+
+bool SimDeviceRunnerBase::multi_rank_clock_alignment_requested() const noexcept {
+    return simpler::dfx::is_rank_dispatch_output_prefix(output_prefix_);
 }
 
 void SimDeviceRunnerBase::publish_host_phase_records_to_swimlane() {

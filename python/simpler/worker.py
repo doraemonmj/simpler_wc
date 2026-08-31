@@ -2801,6 +2801,7 @@ def _run_chip_main_loop(  # noqa: PLR0913, PLR0915 -- fork-child entry: every de
     on_task_done_success=None,
     prepared: set[int] | None = None,
     task_frame_count: int = 1,
+    chip_rank: int | None = None,
 ) -> None:
     """Chip-process handlers for `_run_mailbox_loop`.
 
@@ -2836,12 +2837,24 @@ def _run_chip_main_loop(  # noqa: PLR0913, PLR0915 -- fork-child entry: every de
         )
     )
     global_domain_store = _L2GlobalDomainStore()
+    profiling_capture_index = 0
+
+    def read_task_config(task_buf: memoryview) -> CallConfig:
+        nonlocal profiling_capture_index
+        cfg = _read_config_from_mailbox(
+            task_buf,
+            chip_rank=chip_rank,
+            capture_index=profiling_capture_index,
+        )
+        if cfg.enable_chip_swimlane:
+            profiling_capture_index += 1
+        return cfg
 
     def handle_task(task_buf) -> tuple[int, str]:
         task_addr = ctypes.addressof(ctypes.c_char.from_buffer(task_buf))
         digest = _read_task_digest(task_buf)
         cid = identity_table.get(digest)
-        cfg = _read_config_from_mailbox(task_buf)
+        cfg = read_task_config(task_buf)
 
         code = 0
         msg = ""
@@ -3118,7 +3131,7 @@ def _run_chip_main_loop(  # noqa: PLR0913, PLR0915 -- fork-child entry: every de
                     frame_addr=frame_addr,
                     identity=identity,
                     cid=int(cid),
-                    config=_read_config_from_mailbox(frame_buf),
+                    config=read_task_config(frame_buf),
                     activated=initial_state in (_TASK_READY, _ACTIVATE),
                 )
             except Exception as e:  # noqa: BLE001
@@ -3309,6 +3322,7 @@ def _chip_process_loop(  # noqa: PLR0913 -- fork-child entry: all context (bins,
     runtime: str = "",
     prewarm_config=None,
     enable_sdma: bool = False,
+    chip_rank: int | None = None,
 ) -> None:
     """Runs in forked child process. Loads host_runtime.so in own address space.
 
@@ -3386,12 +3400,18 @@ def _chip_process_loop(  # noqa: PLR0913 -- fork-child entry: all context (bins,
             chip_runtime=runtime,
             prepared=prepared,
             task_frame_count=_local_task_frame_count(platform, runtime, int(cw.pipeline_depth)),
+            chip_rank=chip_rank,
         )
     finally:
         cw.finalize()
 
 
-def _read_config_from_mailbox(buf: memoryview) -> CallConfig:
+def _read_config_from_mailbox(
+    buf: memoryview,
+    *,
+    chip_rank: int | None = None,
+    capture_index: int | None = None,
+) -> CallConfig:
     """Reconstruct a CallConfig from the unified mailbox layout."""
     (
         aicpu_tn,
@@ -3418,9 +3438,16 @@ def _read_config_from_mailbox(buf: memoryview) -> CallConfig:
     cfg.runtime_env.ring_dep_pool = ring_dep_pool
     # NUL-terminated C string in a 1024-byte field.
     cfg.output_prefix = prefix_bytes.split(b"\x00", 1)[0].decode("utf-8")
-    # A forked chip child owns its own log file under the same directory.
+    # Keep per-process host logs at the case root. Profiling artifacts are
+    # routed below, after the log directory has been configured, so changing
+    # capture directories does not add log-directory churn to every dispatch.
     if cfg.output_prefix:
         _native_set_host_log_directory(cfg.output_prefix)
+    if cfg.output_prefix and cfg.enable_chip_swimlane and chip_rank is not None and capture_index is not None:
+        # Device runners consume this exact shape through
+        # host/profiling_output_layout.h::is_rank_dispatch_output_prefix to
+        # enable Device/AICPU clock anchors only for multi-Rank captures.
+        cfg.output_prefix = os.path.join(cfg.output_prefix, f"rank{chip_rank}", f"d{capture_index}")
     return cfg
 
 
@@ -7966,6 +7993,7 @@ class Worker:
                             runtime=str(self._config["runtime"]),
                             prewarm_config=self._prewarm_config,
                             enable_sdma=bool(self._config.get("enable_sdma", False)),
+                            chip_rank=idx,
                         )
                     except BaseException as e:  # noqa: BLE001
                         import traceback as _tb  # noqa: PLC0415

@@ -156,7 +156,32 @@ python -m simpler_setup.tools.swimlane_converter outputs/<case>_<ts>/chip_swimla
 # Reuse a deps.json captured in an earlier dep_gen run (different output dir)
 python -m simpler_setup.tools.swimlane_converter outputs/<case>_<ts>/chip_swimlane_records.json \
     --deps-json outputs/<case>_<earlier_ts>/deps.json
+
+# Merge one same-host L3 dispatch laid out as rankN/d0/chip_swimlane_records.json
+python -m simpler_setup.tools.swimlane_converter build_output/<case>/dfx_outputs \
+    --dispatch d0 -o build_output/<case>/dfx_outputs/l3_swimlane.json
 ```
+
+Directory mode requires level-4 captures with successful Host/Device clock
+anchors and the same non-empty `metadata.host_clock_domain_id`. New captures
+derive that ID from the Linux boot ID; older captures remain supported in
+single-file mode. Every Rank loads its own sibling `deps.json` and unique
+`name_map*.json`, so the single-file override options are intentionally rejected
+in directory mode.
+
+L3 SceneTest runs create `rank<chip-worker>/d<local-capture>/` automatically and
+invoke this directory mode after the case. Symmetric group/collective dispatches
+therefore produce `l3_swimlane.json` without a manual conversion command. The
+metadata records `dispatch_pairing: local_capture_index`; automatic conversion
+requires every Rank to contain exactly the same capture-index set and refuses
+asymmetric sets rather than pairing their intersection. This layout is scoped
+to one same-host L3 Worker; NETWORK1/L4 needs an additional node namespace.
+
+When present, a common `dispatch_program.json` with a `cross_rank_edges` array
+(or a `cross_rank_edges.json` array) supplies explicit task-level cross-Rank
+flows. An edge whose task endpoints overlap is reported as
+`overlapping_task_endpoints` rather than rendered at invented notification/wait
+times; instruction-level timestamps would be needed to place that edge.
 
 > Dependency arrows in the Perfetto trace come from `deps.json` (dep_gen
 > replay). The device hot path no longer records fanout, so the typical

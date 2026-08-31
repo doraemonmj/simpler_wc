@@ -204,7 +204,7 @@ def test_multi_round_chip_swimlane_does_not_reject_l3_items():
     assert [item.nodeid for item in items] == ["tests::host"]
 
 
-def test_single_round_chip_swimlane_rejects_l3_items():
+def test_single_round_chip_swimlane_allows_l3_items():
     @scene_level(SceneTestLevel.NODE)
     def host_fn():
         return None
@@ -221,7 +221,29 @@ def test_single_round_chip_swimlane_rejects_l3_items():
         },
     )
 
-    with pytest.raises(pytest.UsageError, match="not supported for L3 tests"):
+    root_conftest.pytest_collection_modifyitems(None, config, items)
+
+    assert [item.nodeid for item in items] == ["tests::host"]
+
+
+def test_single_round_chip_swimlane_rejects_network1_items():
+    @scene_level(SceneTestLevel.NETWORK1)
+    def network1_fn():
+        return None
+
+    items = [_FakeItem("tests::network1", function=network1_fn)]
+    config = _FakeConfig(
+        platform="a2a3",
+        level=None,
+        **{
+            "exclude-level": None,
+            "runtime": None,
+            "rounds": 1,
+            "enable-chip-swimlane": 4,
+        },
+    )
+
+    with pytest.raises(pytest.UsageError, match="NETWORK1/L4 needs a node namespace"):
         root_conftest.pytest_collection_modifyitems(None, config, items)
 
 

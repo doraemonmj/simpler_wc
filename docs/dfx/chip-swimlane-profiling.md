@@ -164,6 +164,23 @@ runs):
 Filenames are fixed (no per-file timestamp) — the directory is the
 per-task uniqueness boundary.
 
+For L3 SceneTest runs, each forked ChipWorker gets an isolated capture path and
+the postprocessor merges dispatches only when every Rank exposes the same
+complete local capture-index set:
+
+```text
+<output_prefix>/
+├── rank0/d0/chip_swimlane_records.json
+├── rank1/d0/chip_swimlane_records.json
+└── l3_swimlane.json
+```
+
+Here `rankN` is the logical ChipWorker index and `dN` is that worker's local
+profiling-capture index. Automatic merging is limited to one same-host L3
+Worker. NETWORK1/L4 is rejected until the layout also carries a node namespace.
+Every Rank must expose the same complete set of local capture indexes; the
+postprocessor refuses asymmetric sets instead of guessing pairings.
+
 `chip_swimlane_records.json` carries the raw records. **There are two
 layers to be aware of:**
 
@@ -336,7 +353,25 @@ python -m simpler_setup.tools.swimlane_converter \
 # Custom output path
 python -m simpler_setup.tools.swimlane_converter \
     outputs/<case>_<ts>/chip_swimlane_records.json -o my_trace.json
+
+# Same-host L3: merge rankN/d0 captures onto one CLOCK_MONOTONIC timeline
+python -m simpler_setup.tools.swimlane_converter \
+    build_output/<case>/dfx_outputs --dispatch d0
 ```
+
+For directory input, the default output is `dfx_outputs/l3_swimlane.json`.
+Every Rank must be a level-4 capture under
+`rankN/<dispatch>/`, with successful clock anchors and the same
+`metadata.host_clock_domain_id`. The converter preserves real Rank start skew,
+adds Rank-specific PID/name/flow namespaces, and reports clock uncertainty and
+anchor-group observer overhead in trace metadata.
+
+Host-orchestrated level-4 runs retain their existing clock anchors. For
+Device/AICPU orchestration, anchors are additionally enabled only for the
+automatic `rankN/dN` L3 layout, at the common launch boundary before collectors
+and kernels start. Both modes sample again after AICPU/AICore execution
+completes. Existing single-card Device/AICPU level-4 captures therefore keep
+their prior relative timeline and do not pay the new anchor cost.
 
 The output is `outputs/<case>_<ts>/merged_swimlane.json` (or your
 `-o` override). Open <https://ui.perfetto.dev/> and drag the file

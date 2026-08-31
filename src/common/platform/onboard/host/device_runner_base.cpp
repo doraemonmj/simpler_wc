@@ -46,6 +46,7 @@
 #include "common/unified_log.h"
 #include "host/acl_error_log.h"
 #include "host/host_phase_records_artifact.h"
+#include "host/profiling_output_layout.h"
 #include "host/raii_scope_guard.h"
 #include "host_log.h"
 #include "platform_comm/comm.h"
@@ -1274,8 +1275,14 @@ HostPhaseRecordPool *DeviceRunnerBase::host_phase_pool_arm(bool producer_wants_r
     }
     if (!swimlane_wants_records) return pool;
 
-    // Only the chip-swimlane reader places these records against device
-    // timestamps, so only it needs the two clocks anchored.
+    begin_clock_correlation_session_if_needed();
+    return pool;
+}
+
+void DeviceRunnerBase::begin_clock_correlation_session_if_needed() noexcept {
+    if (chip_swimlane_level_ != ChipSwimlaneLevel::ORCH_PHASES || chip_swimlane_collector_.clock_correlation_active()) {
+        return;
+    }
     try {
         clock_correlation_provider_ = simpler::dfx::make_clock_correlation_provider();
         chip_swimlane_collector_.begin_clock_correlation_session(
@@ -1296,7 +1303,10 @@ HostPhaseRecordPool *DeviceRunnerBase::host_phase_pool_arm(bool producer_wants_r
             chip_swimlane_collector_.finish_clock_correlation_session();
         }
     }
-    return pool;
+}
+
+bool DeviceRunnerBase::multi_rank_clock_alignment_requested() const noexcept {
+    return simpler::dfx::is_rank_dispatch_output_prefix(output_prefix_);
 }
 
 void DeviceRunnerBase::publish_host_phase_records_to_swimlane() {
@@ -1857,6 +1867,7 @@ void DeviceRunnerBase::start_shared_collectors_for_run() {
         return create_thread(std::move(fn));
     };
     if (enable_chip_swimlane_) {
+        if (multi_rank_clock_alignment_requested()) begin_clock_correlation_session_if_needed();
         chip_swimlane_collector_.start(thread_factory);
     }
     if (enable_dump_args_) {

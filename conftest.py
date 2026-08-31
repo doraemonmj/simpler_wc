@@ -722,24 +722,22 @@ def pytest_collection_modifyitems(session, config, items):  # noqa: PLR0912
 
     items.sort(key=sort_key)
 
-    # L3 perf collection is not supported yet: a single L3 case forks N chip-processes
-    # that all write chip_swimlane_records_<ts>.json to the same directory with
-    # second-precision timestamps, so they trample each other. Block the
-    # combination up front; waiting for a proper device-id-in-filename fix.
+    # The automatic rankN/dN layout is scoped to one same-host L3 Worker.
+    # NETWORK1 owns several L3 Workers, each of which numbers its local chips
+    # from zero, so accepting it here would reintroduce directory collisions.
     if config.getoption("--enable-chip-swimlane", default=0) and config.getoption("--rounds", default=1) <= 1:
-        l3_items = [
-            i
-            for i in items
-            if _item_scene_level(i) == SceneTestLevel.NODE and not any(m.name == "skip" for m in i.iter_markers())
+        network1_items = [
+            item
+            for item in items
+            if _item_scene_level(item) == SceneTestLevel.NETWORK1
+            and not any(marker.name == "skip" for marker in item.iter_markers())
         ]
-        if l3_items:
-            sample = ", ".join(sorted({i.nodeid for i in l3_items})[:3])
-            more = "" if len(l3_items) <= 3 else f" (+{len(l3_items) - 3} more)"
+        if network1_items:
+            sample = ", ".join(sorted({item.nodeid for item in network1_items})[:3])
+            more = "" if len(network1_items) <= 3 else f" (+{len(network1_items) - 3} more)"
             raise pytest.UsageError(
-                f"--enable-chip-swimlane is not supported for L3 tests yet — "
-                f"multi-chip-process filename collision unresolved. "
-                f"L3 items in this session: {sample}{more}. "
-                f"Either drop --enable-chip-swimlane or scope to L2 with --level 2."
+                "--enable-chip-swimlane supports automatic multi-Rank merging only for same-host L3 tests; "
+                f"NETWORK1/L4 needs a node namespace before it is safe. Items: {sample}{more}."
             )
 
 

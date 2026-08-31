@@ -400,3 +400,6 @@ class TestMailboxConfigRoundtrip:
         assert decoded.runtime_env.ring_heap == [1024, 2048, 4096, 8192]
         assert decoded.runtime_env.ring_dep_pool == [64, 128, 256, 512]
         assert decoded.output_prefix == "/tmp/out"
+
+        ranked = _read_config_from_mailbox(memoryview(buf), chip_rank=2, capture_index=7)
+        assert ranked.output_prefix == "/tmp/out/rank2/d7"

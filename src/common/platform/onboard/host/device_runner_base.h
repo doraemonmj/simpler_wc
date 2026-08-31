@@ -731,6 +731,10 @@ public:
     const simpler::dfx::HostPhaseRecordStore &host_phase_records() const { return host_phase_records_; }
     /** Hand this pass's records to the swimlane reader, just before its export. */
     void publish_host_phase_records_to_swimlane();
+    /** Start the level-4 Host/Device clock correlation once per run. */
+    void begin_clock_correlation_session_if_needed() noexcept;
+    /** Whether this run uses the rankN/dN layout that requires cross-Rank alignment. */
+    bool multi_rank_clock_alignment_requested() const noexcept;
     /**
      * Write this pass's per-event host phase records to `output_prefix_`.
      *

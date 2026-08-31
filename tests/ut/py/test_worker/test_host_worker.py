@@ -225,7 +225,10 @@ def test_chip_process_loop_inits_runs_and_finalizes(monkeypatch):
         def finalize(self) -> None:
             events.append(("finalize",))
 
-    def fake_run_chip_main_loop(cw, *_args, chip_platform, chip_runtime, prepared=None, task_frame_count=1):
+    def fake_run_chip_main_loop(
+        cw, *_args, chip_platform, chip_runtime, prepared=None, task_frame_count=1, chip_rank=None
+    ):
+        assert chip_rank is None
         published_depths.append(worker_mod._PIPELINE_LEASE_FMT.unpack_from(_args[0], worker_mod._OFF_PIPELINE_LEASE)[0])
         published_frame_counts.append(task_frame_count)
         events.append(("main_loop", cw, chip_platform, chip_runtime))

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -25,6 +26,64 @@ from simpler_setup.scene_test import (
     run_class_cases,
     standalone_pytest_options,
 )
+
+
+def test_l3_swimlane_postprocess_merges_dispatches_present_on_every_rank(tmp_path, monkeypatch) -> None:
+    scene_test_module = importlib.import_module("simpler_setup.scene_test")
+    for rank in (0, 1):
+        for dispatch in ("d0", "d1"):
+            records = tmp_path / f"rank{rank}" / dispatch / "chip_swimlane_records.json"
+            records.parent.mkdir(parents=True)
+            records.write_text("{}")
+
+    calls = []
+    monkeypatch.setattr(scene_test_module, "_run_swimlane_converter", lambda **kwargs: calls.append(kwargs))
+
+    scene_test_module._convert_case_swimlane("case", tmp_path)
+
+    assert [call["dispatch"] for call in calls] == ["d0", "d1"]
+    assert [call["output_path"] for call in calls] == [
+        Path(tmp_path) / "l3_swimlane_d0.json",
+        Path(tmp_path) / "l3_swimlane_d1.json",
+    ]
+
+
+def test_l3_swimlane_postprocess_refuses_asymmetric_local_capture_indexes(tmp_path, monkeypatch, caplog) -> None:
+    scene_test_module = importlib.import_module("simpler_setup.scene_test")
+    for rank, dispatches in ((0, ("d0", "d1")), (1, ("d0",))):
+        for dispatch in dispatches:
+            records = tmp_path / f"rank{rank}" / dispatch / "chip_swimlane_records.json"
+            records.parent.mkdir(parents=True)
+            records.write_text("{}")
+
+    calls = []
+    monkeypatch.setattr(scene_test_module, "_run_swimlane_converter", lambda **kwargs: calls.append(kwargs))
+
+    scene_test_module._convert_case_swimlane("case", tmp_path)
+
+    assert calls == []
+    assert "refusing to pair asymmetric local capture indexes" in caplog.text
+
+
+def test_rank_local_dep_and_scope_postprocessors_follow_swimlane_output_prefix(tmp_path, monkeypatch) -> None:
+    scene_test_module = importlib.import_module("simpler_setup.scene_test")
+    captures = [tmp_path / f"rank{rank}" / "d0" for rank in (0, 1)]
+    for capture in captures:
+        (capture / "scope_stats").mkdir(parents=True)
+        (capture / "deps.json").write_text("{}")
+        (capture / "scope_stats" / "scope_stats.jsonl").write_text("")
+
+    dep_calls = []
+    scope_calls = []
+    monkeypatch.setattr(
+        scene_test_module, "_graph_case_dep_gen", lambda _label, path, **_kwargs: dep_calls.append(path)
+    )
+    monkeypatch.setattr(scene_test_module, "_plot_case_scope_stats", lambda _label, path: scope_calls.append(path))
+
+    scene_test_module.finalize_diagnostic_outputs("case", tmp_path, dep_gen=True, scope_stats=True)
+
+    assert dep_calls == captures
+    assert scope_calls == captures
 
 
 def test_multi_rounds_disable_every_diagnostic() -> None:
