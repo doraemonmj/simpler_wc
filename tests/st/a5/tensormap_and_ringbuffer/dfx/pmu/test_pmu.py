@@ -25,7 +25,11 @@ import torch
 from simpler.task_interface import ArgDirection as D
 
 from simpler_setup import SceneTestCase, TaskArgsBuilder, TensorArg, scene_test
-from simpler_setup.scene_test import _outputs_dir, _sanitize_for_filename
+from simpler_setup.scene_test import (
+    _outputs_dir,
+    _sanitize_for_filename,
+    effective_diagnostics_for,
+)
 
 KERNELS_BASE = "../../../../../../examples/a5/tensormap_and_ringbuffer/vector_example/kernels"
 # Required leading columns — keep in sync with build_csv_header() in
@@ -90,7 +94,7 @@ class TestPmu(SceneTestCase):
         # this invocation's output directory from stale same-label leftovers.
         run_marker = int(time.time())  # floor to whole seconds: safe if outputs/ ever lands on a coarse-mtime fs
         super().test_run(st_platform, st_worker, request)
-        if not request.config.getoption("--enable-pmu", default=0):
+        if not effective_diagnostics_for(request).pmu:
             return
         for case in self._matching_cases(st_platform, request):
             self._validate_pmu_artifact(case, run_marker)

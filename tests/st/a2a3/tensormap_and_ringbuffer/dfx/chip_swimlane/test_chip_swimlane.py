@@ -28,6 +28,7 @@ import torch
 from simpler.task_interface import ArgDirection as D
 
 from simpler_setup import SceneTestCase, TaskArgsBuilder, TensorArg, scene_test
+from simpler_setup.scene_test import effective_diagnostics_for
 
 from ._swimlane_validate import validate_perf_artifact
 
@@ -104,7 +105,7 @@ class TestChipSwimlane(SceneTestCase):
         # invocation's output dir rather than a stale same-label leftover.
         run_marker = int(time.time())  # floor to whole seconds: safe if outputs/ ever lands on a coarse-mtime fs
         super().test_run(st_platform, st_worker, request)
-        if not request.config.getoption("--enable-chip-swimlane", default=0):
+        if not effective_diagnostics_for(request).chip_swimlane:
             return
         for case in self._matching_cases(st_platform, request):
             validate_perf_artifact(

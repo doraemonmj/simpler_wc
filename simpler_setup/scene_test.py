@@ -107,6 +107,29 @@ def effective_diagnostic_options(
     return _DiagnosticOptions(0, 0, 0, False, False, False)
 
 
+def effective_diagnostics_for(request) -> _DiagnosticOptions:
+    """Return the diagnostics that actually ran for one pytest invocation.
+
+    A post-run artifact check gates on this, never on the raw CLI flag: the
+    round count can force a diagnostic off, so a check reading the flag demands
+    an artifact from a run that was never going to capture one, and reports a
+    passing configuration as a failure. The warning belongs to ``test_run``,
+    which resolves the same options for the run itself, so this does not repeat
+    it.
+    """
+    config = request.config
+    return effective_diagnostic_options(
+        config.getoption("--rounds", default=1),
+        chip_swimlane=config.getoption("--enable-chip-swimlane", default=0),
+        dump_args=config.getoption("--dump-args", default=0),
+        pmu=config.getoption("--enable-pmu", default=0),
+        dep_gen=config.getoption("--enable-dep-gen", default=False),
+        scope_stats=config.getoption("--enable-scope-stats", default=False),
+        swimlane_overhead=config.getoption("--enable-swimlane-overhead", default=False),
+        warn=False,
+    )
+
+
 @cache
 def _log_torch_backend_autoload_once() -> None:
     """Record torch backend autoload configuration and module state once."""

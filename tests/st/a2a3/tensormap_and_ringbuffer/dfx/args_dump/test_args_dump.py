@@ -27,7 +27,11 @@ import torch
 from simpler.task_interface import ArgDirection as D
 
 from simpler_setup import SceneTestCase, TaskArgsBuilder, TensorArg, scene_test
-from simpler_setup.scene_test import _outputs_dir, _sanitize_for_filename
+from simpler_setup.scene_test import (
+    _outputs_dir,
+    _sanitize_for_filename,
+    effective_diagnostics_for,
+)
 
 KERNELS_BASE = "../../../../../../examples/a2a3/tensormap_and_ringbuffer/vector_example/kernels"
 
@@ -107,7 +111,7 @@ class TestArgsDump(SceneTestCase):
         # Marker taken before the run so we bind to this invocation's output dir
         # rather than a stale same-label leftover from a prior run/session.
         run_marker = int(time.time())  # floor to whole seconds: safe if outputs/ ever lands on a coarse-mtime fs
-        level = int(request.config.getoption("--dump-args", default=0))
+        level = effective_diagnostics_for(request).dump_args
         if level:
             matched = self._matching_cases(st_platform, request)
             assert len(matched) <= 1, (

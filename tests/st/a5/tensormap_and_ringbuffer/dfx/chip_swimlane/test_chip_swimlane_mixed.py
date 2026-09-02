@@ -32,7 +32,11 @@ import torch
 from simpler.task_interface import ArgDirection as D
 
 from simpler_setup import SceneTestCase, TaskArgsBuilder, TensorArg, scene_test
-from simpler_setup.scene_test import _outputs_dir, _sanitize_for_filename
+from simpler_setup.scene_test import (
+    _outputs_dir,
+    _sanitize_for_filename,
+    effective_diagnostics_for,
+)
 
 from ._swimlane_validate import validate_perf_artifact
 
@@ -138,7 +142,8 @@ class TestChipSwimlaneMixed(SceneTestCase):
         run_marker = int(time.time())  # floor to whole seconds: safe if outputs/ ever lands on a coarse-mtime fs
         super().test_run(st_platform, st_worker, request)
         matched = self._matching_cases(st_platform, request)
-        if request.config.getoption("--enable-chip-swimlane", default=False):
+        diagnostics = effective_diagnostics_for(request)
+        if diagnostics.chip_swimlane:
             for case in matched:
                 # Rely on the differential gate (Pop / Fanout / Fanin) —
                 # the chain produces 3 MIX task_ids × 2 subtask rows = 6
@@ -151,7 +156,7 @@ class TestChipSwimlaneMixed(SceneTestCase):
                 )
         # Full-dump modes give the func_id array its regression barrier on the
         # cooperative-mix path (single-kernel coverage lives in test_args_dump).
-        if int(request.config.getoption("--dump-args", default=0)) >= 2:
+        if diagnostics.dump_args >= 2:
             for case in matched:
                 self._validate_dump_func_ids(case, run_marker)
 
