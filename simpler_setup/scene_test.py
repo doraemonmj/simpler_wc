@@ -1375,11 +1375,13 @@ def compile_chip_callable_spec(spec, platform, runtime, cache_key):
     orchestration_units: list[tuple[str | Path, list[str | Path]]] = [
         (source, orch_include_dirs) for source in orch_units
     ]
-    resolved_extra_dirs = []
-    incore_artifact_keys = []
+    # One list of (incore, extra_include_dirs, artifact_key) triples rather than
+    # three lists the two consumers below must keep index-aligned. zip(strict=True)
+    # would state that requirement in one word, but it needs 3.10 and this project
+    # supports 3.9 (pyproject requires-python).
+    incore_units = []
     for k in incores:
         extra = _resolve_incore_include_dirs(k["extra_include_dirs"], k) if k.get("extra_include_dirs") else []
-        resolved_extra_dirs.append(extra)
         include_dirs = [
             Path(pto_isa_root) / "include",
             Path(pto_isa_root) / "include" / "pto",
@@ -1387,16 +1389,20 @@ def compile_chip_callable_spec(spec, platform, runtime, cache_key):
             *inc_dirs,
             *extra,
         ]
-        incore_artifact_keys.append(
-            compile_incore_artifact_key(
-                {
-                    "platform": platform,
-                    "host_platform": sys.platform,
-                    "host_machine": host_platform.machine(),
-                    "compiler": kc.incore_compile_cache_token(k["core_type"]),
-                },
-                k["source"],
-                include_dirs,
+        incore_units.append(
+            (
+                k,
+                extra,
+                compile_incore_artifact_key(
+                    {
+                        "platform": platform,
+                        "host_platform": sys.platform,
+                        "host_machine": host_platform.machine(),
+                        "compiler": kc.incore_compile_cache_token(k["core_type"]),
+                    },
+                    k["source"],
+                    include_dirs,
+                ),
             )
         )
     compiler_token = kc.compile_cache_token(runtime, [k["core_type"] for k in incores])
@@ -1421,7 +1427,7 @@ def compile_chip_callable_spec(spec, platform, runtime, cache_key):
                     "signature": k.get("signature", []),
                     "artifact_key": incore_artifact_key,
                 }
-                for k, incore_artifact_key in zip(incores, incore_artifact_keys, strict=True)
+                for k, _extra, incore_artifact_key in incore_units
             ],
         },
         orchestration_units,
@@ -1456,9 +1462,7 @@ def compile_chip_callable_spec(spec, platform, runtime, cache_key):
                     extra,
                     incore_artifact_key,
                 )
-                for k, extra, incore_artifact_key in zip(
-                    incores, resolved_extra_dirs, incore_artifact_keys, strict=True
-                )
+                for k, extra, incore_artifact_key in incore_units
             ]
             orch_binary = orch_future.result()
             incores_binary = [future.result() for future in incore_futures]
