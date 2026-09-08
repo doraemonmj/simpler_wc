@@ -327,6 +327,35 @@ TEST(BufferPoolManagerShardingTest, WaitPopReadyWakesOnProducer) {
     producer.join();
 }
 
+TEST(BufferPoolManagerShardingTest, WaitPopReadyWakesWhenControlIsRequested) {
+    using namespace std::chrono_literals;
+    profiling_common::BufferPoolManager<TestModule> manager;
+    std::atomic<bool> wake_requested{false};
+
+    std::promise<void> started_promise;
+    std::future<void> started = started_promise.get_future();
+    std::promise<bool> result_promise;
+    std::future<bool> result = result_promise.get_future();
+    std::thread consumer([&]() {
+        started_promise.set_value();
+        TestReadyBufferInfo out;
+        result_promise.set_value(manager.wait_pop_ready(out, 5s, 0, [&] {
+            return wake_requested.load(std::memory_order_acquire);
+        }));
+    });
+
+    ASSERT_EQ(started.wait_for(500ms), std::future_status::ready);
+    wake_requested.store(true, std::memory_order_release);
+    manager.notify_ready_waiters();
+
+    const auto result_status = result.wait_for(500ms);
+    EXPECT_EQ(result_status, std::future_status::ready);
+    if (result_status == std::future_status::ready) {
+        EXPECT_FALSE(result.get());
+    }
+    consumer.join();
+}
+
 TEST(BufferPoolManagerShardingTest, WaitPushReadyWakesOnConsumerAndPreservesFifo) {
     using namespace std::chrono_literals;
     using Manager = profiling_common::BufferPoolManager<TestModule>;

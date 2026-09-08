@@ -650,18 +650,52 @@ public:
         return true;
     }
 
-    bool wait_pop_ready(ReadyBufferInfo &out, std::chrono::milliseconds timeout, int shard_index = 0) {
+    /**
+     * Wait for a ready buffer or for an external control condition. The
+     * control predicate is level-triggered: it remains true until the caller
+     * observes the false return and handles the condition. A notification may
+     * precede this call reaching the wait, in which case the predicate itself
+     * must still make the condition observable.
+     *
+     * Returns true only when a buffer was popped. A timeout or a satisfied
+     * control predicate returns false.
+     */
+    template <typename WakePredicate>
+    bool wait_pop_ready(
+        ReadyBufferInfo &out, std::chrono::milliseconds timeout, int shard_index, const WakePredicate &wake_requested
+    ) {
         auto &shard = ready_shards_[normalize_shard(shard_index)];
         if (try_pop_ready(out, shard_index)) return true;
 
         uint64_t seen = shard.state_epoch.load(std::memory_order_acquire);
         std::unique_lock<std::mutex> lock(shard.wait_mutex);
-        if (!shard.cv.wait_for(lock, timeout, [&shard, seen] {
-                return shard.state_epoch.load(std::memory_order_acquire) != seen || !shard.queue.empty();
+        if (!shard.cv.wait_for(lock, timeout, [&shard, seen, &wake_requested] {
+                return wake_requested() || shard.state_epoch.load(std::memory_order_acquire) != seen ||
+                       !shard.queue.empty();
             })) {
             return false;
         }
         return try_pop_ready(out, shard_index);
+    }
+
+    bool wait_pop_ready(ReadyBufferInfo &out, std::chrono::milliseconds timeout, int shard_index = 0) {
+        return wait_pop_ready(out, timeout, shard_index, [] {
+            return false;
+        });
+    }
+
+    /**
+     * Wake every live ready-queue consumer after its level-triggered control
+     * state has been published. Synchronizing with each shard's wait mutex
+     * prevents a consumer from checking a false predicate and going to sleep
+     * after the control notification.
+     */
+    void notify_ready_waiters() {
+        for (int shard_index = 0; shard_index < shard_count_; shard_index++) {
+            auto &shard = ready_shards_[shard_index];
+            std::lock_guard<std::mutex> lock(shard.wait_mutex);
+            shard.cv.notify_all();
+        }
     }
 
     // -------------------------------------------------------------------------

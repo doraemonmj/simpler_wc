@@ -131,8 +131,9 @@
  *        a) flips mgmt_running_, joins the mgmt thread(s); the drain thread's
  *           final-drain pass pushes the last device-ring entries into the host
  *           ready queue shard(s) before exiting.
- *        b) execution_complete_ is set; each collector loop sees it on its
- *           next idle tick, drains its host ready queue shard, and exits.
+ *        b) execution_complete_ is set and the ready-queue waiters are
+ *           notified; each collector drains its host ready queue shard and
+ *           exits.
  *        c) collector thread(s) joined.
  *      Caller is then guaranteed the device-side ring and the host ready queue
  *      shard(s) are both empty and all collected data has been delivered to
@@ -1012,6 +1013,7 @@ public:
         // Phase two: only now can a collector's "my shard is empty" mean the
         // pipeline is empty rather than that mgmt has not pushed yet.
         collect_quiesce_epoch_.store(epoch, std::memory_order_release);
+        manager_.notify_ready_waiters();
         wait_for_epoch(collect_acked_, n, epoch);
     }
 
@@ -1039,6 +1041,7 @@ public:
             mgmt_replenish_thread_.join();
         }
         execution_complete_.store(true, std::memory_order_release);
+        manager_.notify_ready_waiters();
         for (auto &thread : collector_threads_) {
             if (thread.joinable()) {
                 thread.join();
@@ -1253,9 +1256,16 @@ private:
         }
     }
 
+    bool quiesce_pending(int shard_index) const {
+        return collect_quiesce_epoch_.load(std::memory_order_acquire) !=
+               collect_acked_[shard_index].load(std::memory_order_relaxed);
+    }
+
     /**
-     * Main collector loop. Blocks on one manager ready-queue shard with a 100 ms
-     * cv-wait tick. On each hit it dispatches the buffer to Derived via
+     * Main collector loop. Blocks on one manager ready-queue shard. Ready
+     * buffers and lifecycle control requests wake it immediately; the 100 ms
+     * cv-wait tick is a fallback for missed data-path notifications and idle
+     * bookkeeping. On each hit it dispatches the buffer to Derived via
      * on_buffer_collected() and recycles the buffer. Exits only after:
      *
      *   execution_complete_ was set (by stop()) and this ready_queue shard is
@@ -1274,7 +1284,9 @@ private:
 
         while (true) {
             ReadyBufferInfo info;
-            if (manager_.wait_pop_ready(info, wait_tick, shard_index)) {
+            if (manager_.wait_pop_ready(info, wait_tick, shard_index, [this, shard_index] {
+                    return execution_complete_.load(std::memory_order_acquire) || quiesce_pending(shard_index);
+                })) {
                 consume(info, shard_index);
                 has_seen_buffer = true;
                 idle_start.reset();
@@ -1287,15 +1299,16 @@ private:
                 }
                 break;
             }
-            // Phase two of the quiescence handshake. wait_pop_ready timed out,
-            // so this shard is empty; mgmt has already reported its own sweep
+            // Phase two of the quiescence handshake. A false wait result means
+            // no ready buffer was available after either a timeout or a control
+            // wake. For a pending quiesce, mgmt has already reported its sweep
             // done for this epoch, so nothing further can arrive. Placed above
             // the has_seen_buffer guard below: a shard that never received a
             // buffer is a valid run shape and still has to report, or quiesce()
             // would wait on it forever.
             {
                 const uint64_t requested = collect_quiesce_epoch_.load(std::memory_order_acquire);
-                if (collect_acked_[shard_index].load(std::memory_order_relaxed) != requested) {
+                if (quiesce_pending(shard_index)) {
                     while (manager_.try_pop_ready(info, shard_index)) {
                         consume(info, shard_index);
                         has_seen_buffer = true;

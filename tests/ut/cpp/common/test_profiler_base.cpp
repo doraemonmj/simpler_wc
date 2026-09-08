@@ -237,6 +237,39 @@ TEST(ProfilerBaseTest, EveryLiveQueueIsDrained) {
     EXPECT_EQ(collector.collected(), kThreads);
 }
 
+TEST(ProfilerBaseTest, StopWakesSilentCollector) {
+    using namespace std::chrono_literals;
+
+    TestHeader header{};
+    TestCollector<SingleShardModule> collector;
+    collector.init(2, &header);
+    collector.start(nullptr);
+    std::this_thread::sleep_for(10ms);
+
+    const auto start = std::chrono::steady_clock::now();
+    collector.stop();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    EXPECT_LT(elapsed, 50ms);
+}
+
+TEST(ProfilerBaseTest, QuiesceWakesSilentCollector) {
+    using namespace std::chrono_literals;
+
+    TestHeader header{};
+    TestCollector<SingleShardModule> collector;
+    collector.init(2, &header);
+    collector.start(nullptr);
+    std::this_thread::sleep_for(10ms);
+
+    const auto start = std::chrono::steady_clock::now();
+    collector.quiesce();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    EXPECT_LT(elapsed, 50ms);
+    collector.stop();
+}
+
 // A subsystem that emits nothing for a whole run is a valid shape: stop() must
 // bring the collector down via execution_complete_, NOT via the idle-timeout
 // hang detector. The guard that used to skip arming the timeout only applied

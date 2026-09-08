@@ -171,8 +171,10 @@ Provides:
   arrays; the live shard count is the runtime `min(aicpu_thread_num,
   kMaxCollectorThreads)`) — each collector drains one host ready shard and
   returns finished buffers through the matching done shard.
-- `poll_and_collect_loop` — per-shard `wait_pop_ready` with a 100 ms cv
-  tick, dispatches to `Derived::on_buffer_collected`, then calls
+- `poll_and_collect_loop` — per-shard `wait_pop_ready`; ready buffers and
+  lifecycle control requests wake it immediately, while a 100 ms cv tick is a
+  fallback for data-path notification loss and idle bookkeeping. It dispatches
+  to `Derived::on_buffer_collected`, then calls
   `manager_.notify_copy_done(...)` itself; its idle-timeout detector reports
   stalled traffic but keeps the consumer alive until execution completes.
 - `set_memory_context` / `clear_memory_context` so `Derived::init` can
@@ -376,6 +378,7 @@ the hot SPSC path and is released at teardown.
     join mgmt thread(s)     ← drain final-pass flushes the last entries into
                               ready shards before exiting
     execution_complete_ = true
+    notify ready waiters     ← lifecycle control does not wait for the cv tick
     join collector thread(s)← each shard drains once more, then exits
 
   Derived::finalize(unregister, free)
