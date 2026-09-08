@@ -36,12 +36,13 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from simpler_setup.tools.clock_correlation import build_clock_alignment
+from simpler_setup.tools import containment
 from simpler_setup.tools.scheduler_phase_records import (
     canonical_sched_phase,
     nested_resolve_record_ids,
     scheduler_thread_role,
 )
+from simpler_setup.tools.strace_timing import host_process_lanes, parse_spans, span_family
 
 
 def _func_id_to_letter(func_id):
@@ -225,14 +226,14 @@ def _collect_graph_execution_instances(tasks, scheduler_phases):  # noqa: PLR091
     return instances
 
 
-def read_perf_data(filepath, *, timeline_origin_ns=None):
+def read_perf_data(filepath, *, timeline_origin_ns=None, placement=None):
     """Read and decode performance data from a swimlane JSON file."""
     with open(filepath) as file:
         data = json.load(file)
-    return _decode_perf_data(data, timeline_origin_ns=timeline_origin_ns)
+    return _decode_perf_data(data, timeline_origin_ns=timeline_origin_ns, placement=placement)
 
 
-def _decode_perf_data(data, *, timeline_origin_ns=None):  # noqa: PLR0912, PLR0915
+def _decode_perf_data(data, *, timeline_origin_ns=None, placement=None):  # noqa: PLR0912, PLR0915
     """Decode performance data from an already-loaded swimlane document.
 
     Host dumps raw cycle-domain per-stream records plus metadata; this
@@ -269,9 +270,16 @@ def _decode_perf_data(data, *, timeline_origin_ns=None):  # noqa: PLR0912, PLR09
     software-tunable). Archived v2 JSON without this column still parses;
     the field is exposed as 0 for those.
 
+    ``placement`` optionally supplies a ``containment.Placement`` — where this
+    capture's device clock sits on the Host CLOCK_MONOTONIC axis, derived from
+    the Host span that brackets it (see ``containment``). With one, device
+    records are emitted on the Host timeline and carry the placement's slack as
+    their error bound; without one they stay on their own relative timeline,
+    because nothing in this file alone says where that timeline sits.
+
     ``timeline_origin_ns`` optionally supplies a Host CLOCK_MONOTONIC origin
-    shared by several same-host Rank files. The default preserves the existing
-    single-file origin.
+    shared by several same-host Rank files. It requires a ``placement``: an
+    origin from another process is meaningless on a relative device timeline.
 
     Returns a dict shaped for `generate_chrome_trace_json`,
     `print_task_statistics`, and `sched_overhead_analysis`: `tasks`,
@@ -425,7 +433,6 @@ def _decode_perf_data(data, *, timeline_origin_ns=None):  # noqa: PLR0912, PLR09
         or bool(host_orch_phases_raw)
         or isinstance(raw_host_capture, dict)
     )
-    clock_anchor_mode = isinstance(metadata.get("clock_anchors"), dict)
     if orch_phases_raw and host_mode:
         raise ValueError("both AICPU and host orchestrator phases are present; clock-domain source is ambiguous")
 
@@ -585,35 +592,15 @@ def _decode_perf_data(data, *, timeline_origin_ns=None):  # noqa: PLR0912, PLR09
     if base_time_cycles is None:
         base_time_cycles = 0
 
-    device_timestamps = []
-    for row in aicore_rows:
-        start_cycles = int(row[3])
-        receive_to_start_cycles = int(row[5]) if len(row) > 5 else 0
-        device_timestamps.extend((start_cycles - receive_to_start_cycles, start_cycles, int(row[4])))
-    for _, _, dispatch_cycles, finish_cycles in scheduler_task_rows:
-        device_timestamps.extend((int(dispatch_cycles), int(finish_cycles)))
-    for phase_threads in (sched_phases_raw, orch_phases_raw):
-        for thread_records in phase_threads:
-            for phase in thread_records:
-                device_timestamps.extend((int(phase.get("start_cycles", 0)), int(phase.get("end_cycles", 0))))
-    for record in lifecycle_raw:
-        device_timestamps.extend(int(record.get(field, 0)) for field in lifecycle_cycle_fields)
-
-    clock_alignment = None
-    if host_mode or clock_anchor_mode:
-        clock_alignment = build_clock_alignment(
-            metadata.get("clock_anchors"),
-            clock_freq_hz,
-            device_timestamps,
-            metadata.get("host_timestamp_quantization_ns", 0),
-        )
-        if host_origin_ns == 0 and clock_alignment.start is not None:
-            host_origin_ns = clock_alignment.start.host_mid_ns
-
     source_host_origin_ns = host_origin_ns
+    if placement is not None and host_origin_ns == 0:
+        # A capture with no Host records of its own still gets a Host origin
+        # from the window it is placed in, so its lane starts where the run did
+        # rather than at an arbitrary first record.
+        host_origin_ns = int(placement.place_lo_ns)
     if timeline_origin_ns is not None:
-        if clock_alignment is None or clock_alignment.status != "calibrated":
-            raise ValueError("a shared timeline origin requires calibrated Host/Device clock anchors")
+        if placement is None:
+            raise ValueError("a shared timeline origin requires a containment placement for this capture")
         host_origin_ns = int(timeline_origin_ns)
         if host_origin_ns <= 0:
             raise ValueError(f"invalid shared timeline origin: {host_origin_ns}")
@@ -623,8 +610,8 @@ def _decode_perf_data(data, *, timeline_origin_ns=None):  # noqa: PLR0912, PLR09
     def _to_us(cycles):
         if cycles <= 0:
             return 0.0
-        if clock_alignment is not None and clock_alignment.status == "calibrated":
-            return (clock_alignment.map_cycles_to_host_ns(cycles) - host_origin_ns) / 1000.0
+        if placement is not None:
+            return (placement.map_cycles_to_host_ns(cycles) - host_origin_ns) / 1000.0
         relative_device_us = (cycles - base_time_cycles) * cycles_to_us_factor
         if host_mode:
             # Fail-soft diagnostic layout: preserve both clock domains and only
@@ -812,26 +799,21 @@ def _decode_perf_data(data, *, timeline_origin_ns=None):  # noqa: PLR0912, PLR09
     if host_device_uploads:
         out["host_device_uploads"] = host_device_uploads
     if host_mode:
-        if clock_alignment is None:
-            raise RuntimeError("host timeline is missing its clock-alignment result")
         out["orchestrator_source"] = "host"
-        calibrated = clock_alignment.status == "calibrated"
         trace_status = "complete" if host_capture_complete else "partial"
         out["timeline_metadata"] = {
-            "layout": "clock_aligned" if calibrated else "causal_composite",
+            "layout": "containment_spliced" if placement is not None else "causal_composite",
             "trace_status": trace_status,
             "relation": metadata.get("timeline_relation", "host_orchestration_precedes_device"),
-            "clock_alignment": clock_alignment.metadata(),
             "host_capture": host_capture,
             "host_records_complete": host_capture_complete,
-            "cross_domain_latency_available": calibrated and host_capture_complete,
+            # Containment bounds the seam rather than closing it, so a latency
+            # read across it is available but never exact: it carries `slack_ns`.
+            "cross_domain_latency_available": placement is not None and host_capture_complete,
             "source_timeline_origin_ns": source_host_origin_ns,
             "timeline_origin_ns": host_origin_ns,
         }
-        host_clock_domain_id = metadata.get("host_clock_domain_id")
-        if host_clock_domain_id:
-            out["timeline_metadata"]["host_clock_domain_id"] = str(host_clock_domain_id)
-        if not calibrated:
+        if placement is None:
             out["timeline_metadata"].update(
                 {
                     "cross_domain_gap_unknown": True,
@@ -842,19 +824,21 @@ def _decode_perf_data(data, *, timeline_origin_ns=None):  # noqa: PLR0912, PLR09
             out["aicpu_orchestrator_phases"] = host_orchestrator_phases
         else:
             out["timeline_metadata"]["host_records_missing"] = True
-    elif clock_anchor_mode:
-        if clock_alignment is None:
-            raise RuntimeError("clock anchors are missing their alignment result")
-        calibrated = clock_alignment.status == "calibrated"
+    elif placement is not None:
         out["timeline_metadata"] = {
-            "layout": "clock_aligned" if calibrated else "device_relative",
-            "trace_status": "complete" if calibrated else "partial",
-            "clock_alignment": clock_alignment.metadata(),
+            "layout": "containment_spliced",
+            # The placement is what makes the capture readable on the Host axis;
+            # whether the capture itself is whole is `host_capture`'s business,
+            # and a capture with no Host records of its own has none to lose.
+            "trace_status": "complete",
             "host_records_complete": False,
-            "cross_domain_latency_available": False,
+            "cross_domain_latency_available": True,
             "source_timeline_origin_ns": source_host_origin_ns,
             "timeline_origin_ns": host_origin_ns,
         }
+    if "timeline_metadata" in out:
+        if placement is not None:
+            out["timeline_metadata"]["placement"] = placement.metadata()
         host_clock_domain_id = metadata.get("host_clock_domain_id")
         if host_clock_domain_id:
             out["timeline_metadata"]["host_clock_domain_id"] = str(host_clock_domain_id)
@@ -3190,6 +3174,20 @@ Examples:
         help="Parent dispatch identity to merge for directory input, formatted as RUN_ID:TASK_SLOT",
     )
     parser.add_argument(
+        "--host-log",
+        action="append",
+        help="Host [STRACE] log holding the chip.run.runner_run windows the captures are placed in "
+        "(repeatable). Defaults to every host.*.log in the input directory.",
+    )
+    parser.add_argument(
+        "--rank-pid",
+        action="append",
+        metavar="RANK=PID[:INV]",
+        help="Pin one Rank's capture to the Host invocation that ran it (repeatable). Only needed when the "
+        "captures carry no dispatch_identity.json and Ranks running the same shape cannot be told apart by "
+        "their device windows. Give :INV when the process ran more than once.",
+    )
+    parser.add_argument(
         "--overhead",
         action="store_true",
         help="Add an 'Overhead Analysis' track (8 counter lines: per-engine "
@@ -3325,6 +3323,21 @@ _RANK_DIR_PATTERN = re.compile(r"rank([0-9]+)")
 _DISPATCH_DIR_PATTERN = re.compile(r"d[0-9]+")
 _DISPATCH_ID_PATTERN = re.compile(r"([0-9]+):([0-9]+)")
 _RANK_PID_STRIDE = 100
+# Perfetto orders process groups by pid, so the pid *is* the layout: the two
+# clock domains read as two blocks only if every Host-domain pid sorts below
+# every Chip one. The Host block takes the first stride, and the Chip views
+# start at the stride above it.
+#
+# Inside the Host block the dispatching processes come first, one pid each —
+# the L3 scheduler that sent the work, and whatever level sent to it — because
+# they are what the Ranks below them are a consequence of.
+_DISPATCHER_PID_BASE = 1
+_DISPATCHER_PID_LIMIT = 10
+# Then one run of pids per Rank, which keeps its three lanes adjacent.
+_HOST_BLOCK_PID_BASE = _DISPATCHER_PID_BASE + _DISPATCHER_PID_LIMIT
+# Lanes one Rank contributes to the Host block: its own call tree, the device
+# phases the Host log carries, and the window they are placed in.
+_HOST_LANES_PER_RANK = 3
 
 
 def _l3_rank_dirs(root):
@@ -3381,6 +3394,11 @@ def _load_dispatch_identity(capture_dir):
         raise ValueError(f"dispatch identity has invalid endpoint diagnostics: {path}")
     if identity["group_size"] <= 0 or not 0 <= identity["group_index"] < identity["group_size"]:
         raise ValueError(f"dispatch identity has invalid group membership: {path}")
+    # Optional: a sidecar written before the field existed carries no host pid,
+    # and its capture is then paired by how well the device windows fit.
+    host_pid = identity.get("host_pid")
+    if host_pid is not None and (isinstance(host_pid, bool) or not isinstance(host_pid, int) or host_pid <= 0):
+        raise ValueError(f"dispatch identity host_pid must be a positive integer: {path}")
     if not re.fullmatch(r"[0-9a-f]{64}", identity.get("callable_digest", "")):
         raise ValueError(f"dispatch identity has an invalid callable digest: {path}")
 
@@ -3584,23 +3602,333 @@ def discover_l3_conversion_targets(root):
     return targets
 
 
-def _validate_l3_rank_data(rank, records_path, data):
-    if data.get("chip_swimlane_level") != 4:
-        raise ValueError(f"rank{rank} must use chip_swimlane_level 4: {records_path}")
-    timeline = data.get("timeline_metadata") or {}
-    alignment = timeline.get("clock_alignment") or {}
-    if alignment.get("status") != "calibrated":
-        reason = alignment.get("reason", "unknown")
-        raise ValueError(f"rank{rank} clock calibration failed ({reason}): {records_path}")
-    clock_domain = timeline.get("host_clock_domain_id")
+def _rank_clock_domain(rank, records_path, raw):
+    """The Host clock the Rank's own process timestamps on.
+
+    Containment places a Rank inside a window read from that Host's
+    CLOCK_MONOTONIC, so two Ranks are comparable exactly when they name the same
+    clock. A capture from before the field existed is accepted with a warning:
+    the merge it is asked for is same-host by construction, and refusing an old
+    capture buys no correctness a reader could act on.
+    """
+    clock_domain = (raw.get("metadata") or {}).get("host_clock_domain_id")
     if not clock_domain:
-        raise ValueError(
-            f"rank{rank} is missing metadata.host_clock_domain_id; old captures remain usable only in single-file mode"
+        print(
+            f"Warning: rank{rank} predates metadata.host_clock_domain_id ({records_path}); "
+            "the merge assumes every Rank ran against one Host clock",
+            file=sys.stderr,
         )
-    origin_ns = int(timeline.get("source_timeline_origin_ns") or 0)
-    if origin_ns <= 0:
-        raise ValueError(f"rank{rank} has no valid Host timeline origin: {records_path}")
-    return str(clock_domain), origin_ns
+        return None
+    return str(clock_domain)
+
+
+def _discover_host_logs(root, explicit):
+    """The `[STRACE]` logs that hold the outer windows for these captures.
+
+    A run writes one `host.<pid>.log` per process into its ``output_prefix``,
+    which is the directory the Rank captures sit below, so the default needs no
+    flag. See ``docs/dfx/host-trace.md``.
+    """
+    if explicit:
+        paths = [Path(item) for item in explicit]
+        missing = [str(path) for path in paths if not path.is_file()]
+        if missing:
+            raise ValueError(f"--host-log names a file that does not exist: {', '.join(missing)}")
+        return paths
+    paths = sorted(Path(root).glob("host.*.log"))
+    if not paths:
+        raise ValueError(
+            f"no host.*.log under {root}: cross-Rank placement reads each Rank's device work out of the "
+            f"{containment.RUNNER_SPAN} window that contains it. Pass --host-log, or re-run with a Host log "
+            f"threshold of TIMING or finer."
+        )
+    return paths
+
+
+def _parse_rank_pid_pins(values):
+    """Read ``--rank-pid RANK=PID`` / ``RANK=PID:INV`` into what containment takes.
+
+    The invocation form exists because a process runs many invocations and the
+    bare pid only identifies one of them when the run had exactly one.
+    """
+    pins = {}
+    for item in values or []:
+        rank, separator, target = item.partition("=")
+        pid, _, inv = target.partition(":")
+        if not separator or not rank.strip().isdigit() or not pid.strip().isdigit():
+            raise ValueError(f"--rank-pid must be RANK=PID or RANK=PID:INV (for example, 0=4242), not {item!r}")
+        if inv and not inv.strip().isdigit():
+            raise ValueError(f"--rank-pid invocation must be a number, as RANK=PID:INV, not {item!r}")
+        pins[int(rank)] = (int(pid), int(inv)) if inv else int(pid)
+    return pins
+
+
+def _place_rank_captures(host_log_paths, raw_inputs, identities, host_pids, pins):
+    """Bound where each Rank's device records sit on the Host timeline.
+
+    Returns the spans as well: the same Host log that supplies the outer window
+    also holds that process's own call tree, which the merged trace draws beside
+    the Rank it belongs to.
+    """
+    spans = []
+    for path in host_log_paths:
+        with path.open(errors="replace") as log:
+            spans.extend(parse_spans(log))
+    windows = containment.host_windows(spans)
+    if not windows:
+        raise ValueError(
+            f"the Host logs hold no {containment.RUNNER_SPAN} / {containment.DEVICE_WALL_SPAN} pair; "
+            "nothing brackets the device work"
+        )
+    captures = {rank: containment.capture_windows(raw) for rank, raw in raw_inputs.items()}
+    pairs, pairing = containment.pair_captures(
+        windows, captures, forced=pins, identities=identities, host_pids=host_pids
+    )
+    placements = {rank: containment.place(pairs[rank], captures[rank]) for rank in captures}
+    return placements, pairing, spans
+
+
+def _host_block_lane(rank, lane_index, label):
+    """Metadata for one lane of a Rank's Host block.
+
+    Perfetto orders process groups by pid, so the Host block has to keep every
+    one of its pids below the first Chip view. Each Rank owns a fixed run of
+    them, which keeps its three lanes adjacent.
+    """
+    pid = _HOST_BLOCK_PID_BASE + rank * _HOST_LANES_PER_RANK + lane_index
+    # rank0's Chip views start at one stride, so the whole Host block has to fit
+    # below it: past that the two blocks interleave and lanes silently merge.
+    if pid >= _RANK_PID_STRIDE:
+        raise ValueError(
+            f"rank{rank} needs Host-block pid {pid}, which does not fit below the per-Rank stride "
+            f"{_RANK_PID_STRIDE}; the merge supports at most "
+            f"{(_RANK_PID_STRIDE - _HOST_BLOCK_PID_BASE) // _HOST_LANES_PER_RANK} Ranks"
+        )
+    return pid, [
+        {"args": {"name": f"rank{rank} / {label}"}, "cat": "__metadata", "name": "process_name", "ph": "M", "pid": pid},
+        {"args": {"sort_index": pid}, "cat": "__metadata", "name": "process_sort_index", "ph": "M", "pid": pid},
+    ]
+
+
+def _dispatcher_spans(spans, chip_pids, window_ns):
+    """The dispatching processes' spans that belong to the merged dispatch.
+
+    Their logs cover the whole run while the merge covers one dispatch, so the
+    Ranks' own span on the Host axis selects what to keep — in two passes,
+    because the level above the chip emits spans of two different scopes.
+
+    A span with an invocation is kept or dropped with its whole invocation:
+    `node.submit` runs to completion before the Rank it dispatched to starts,
+    so an overlap test applied span by span would draw the dispatch and drop
+    what led to it.
+
+    ``inv=0`` says the span belongs to a thread rather than to one run —
+    `node.scheduler_loop` is emitted that way (`Scheduler::…`, run id 0), so
+    its "invocation" is every loop the process ever ran and cannot be the unit.
+    Those are taken span by span, against the story the first pass selected: a
+    loop is drawn when it overlaps what the dispatch did, which is wider than
+    the Ranks' own windows at both ends.
+    """
+    window_lo, window_hi = window_ns
+    # By family, not only by pid: a chip child that no placement paired with is
+    # still a chip child, and labelling it a dispatcher would be a lie.
+    host_spans = [
+        span for span in spans if span.pid not in chip_pids and not span.is_device and span_family(span.name) != "chip"
+    ]
+
+    def overlaps(span, lo, hi):
+        return span.ts < hi and span.ts + span.dur > lo
+
+    concurrent = {(span.pid, span.inv) for span in host_spans if span.inv and overlaps(span, window_lo, window_hi)}
+    selected = [span for span in host_spans if span.inv and (span.pid, span.inv) in concurrent]
+
+    story_lo = min([window_lo] + [span.ts for span in selected])
+    story_hi = max([window_hi] + [span.ts + span.dur for span in selected])
+    selected += [span for span in host_spans if not span.inv and overlaps(span, story_lo, story_hi)]
+    return selected
+
+
+def _dispatcher_block_events(spans, global_origin_ns):
+    """The processes that dispatched to these Ranks, drawn above them.
+
+    An L3 run writes one `host.<pid>.log` per process into the same case root,
+    so the scheduler's own `node.*` spans — and an L4's `network1.*` above them
+    — are already beside the Rank captures. They are Host CLOCK_MONOTONIC and
+    same-host cross-process comparable, so they go straight onto the axis: no
+    containment, no slack. Containment is only ever needed for the device
+    clock, which is why nothing in this block carries a bound.
+    """
+    processes = host_process_lanes(spans)
+    if len(processes) > _DISPATCHER_PID_LIMIT:
+        raise ValueError(
+            f"{len(processes)} dispatching processes is more than the {_DISPATCHER_PID_LIMIT} the Host block "
+            "reserves pids for"
+        )
+
+    events = []
+    for index, (pid, process) in enumerate(sorted(processes.items())):
+        block_pid = _DISPATCHER_PID_BASE + index
+        events += [
+            {
+                "args": {"name": process["label"]},
+                "cat": "__metadata",
+                "name": "process_name",
+                "ph": "M",
+                "pid": block_pid,
+            },
+            {
+                "args": {"sort_index": block_pid},
+                "cat": "__metadata",
+                "name": "process_sort_index",
+                "ph": "M",
+                "pid": block_pid,
+            },
+        ]
+        events += [
+            {
+                "args": {"name": name},
+                "cat": "__metadata",
+                "name": "thread_name",
+                "ph": "M",
+                "pid": block_pid,
+                "tid": tid,
+            }
+            for tid, name in process["lanes"].items()
+        ]
+        for span, attrs, tid in process["spans"]:
+            events.append(
+                {
+                    "name": span.name,
+                    "cat": "host",
+                    "ph": "X",
+                    "pid": block_pid,
+                    "tid": tid,
+                    "ts": (span.ts - global_origin_ns) / 1000.0,
+                    "dur": span.dur / 1000.0,
+                    "args": {"inv": span.inv, "os_pid": span.pid, "os_tid": span.tid, "depth": span.depth, **attrs},
+                }
+            )
+    return events
+
+
+def _host_call_tree_events(rank, placement, spans, global_origin_ns):
+    """The Rank's own Host call tree — `chip.run` and everything under it.
+
+    Drawn on the Host axis directly, since that is the clock it was recorded
+    on: this lane carries no placement error at all, unlike the two below it.
+    They nest by timestamp on one track because they are one thread's call
+    tree, which is what `depth` already says.
+    """
+    pid, events = _host_block_lane(rank, 0, "Host")
+    events.append(
+        {
+            "args": {"name": f"pid {placement.host.pid}"},
+            "cat": "__metadata",
+            "name": "thread_name",
+            "ph": "M",
+            "pid": pid,
+            "tid": 0,
+        }
+    )
+    for span in sorted(spans, key=lambda item: (item.ts, -item.dur)):
+        events.append(
+            {
+                "name": span.name,
+                "cat": "host",
+                "ph": "X",
+                "pid": pid,
+                "tid": 0,
+                "ts": (span.ts - global_origin_ns) / 1000.0,
+                "dur": span.dur / 1000.0,
+                "args": {"rank": rank, "inv": span.inv, "os_pid": span.pid, "depth": span.depth},
+            }
+        )
+    return events
+
+
+def _host_device_phase_events(rank, placement, spans, global_origin_ns):
+    """The `clk=dev` spans the Host log carries, placed by containment.
+
+    These cover the head of the run that the capture does not record at all —
+    preamble, SO load and graph build produce no swimlane record — so they are
+    drawn beside the capture rather than instead of it. One lane per phase
+    name: the phases are reduced across AICPU threads, so two of them can
+    overlap without either containing the other, which one track cannot show.
+    """
+    pid, events = _host_block_lane(rank, 1, "Device phases (placed)")
+    slack_ns = int(round(placement.slack_ns))
+    lane_of = {}
+    for span in sorted(spans, key=lambda item: (item.ts, -item.dur)):
+        if span.name not in lane_of:
+            lane_of[span.name] = len(lane_of)
+            events.append(
+                {
+                    "args": {"name": span.name.rpartition(".")[2]},
+                    "cat": "__metadata",
+                    "name": "thread_name",
+                    "ph": "M",
+                    "pid": pid,
+                    "tid": lane_of[span.name],
+                }
+            )
+        events.append(
+            {
+                "name": span.name,
+                "cat": "host.device",
+                "ph": "X",
+                "pid": pid,
+                "tid": lane_of[span.name],
+                "ts": (placement.phase_ns_to_host_ns(span.ts) - global_origin_ns) / 1000.0,
+                "dur": span.dur / 1000.0,
+                "args": {"rank": rank, "device_ts_ns": span.ts, "slack_ns": slack_ns},
+            }
+        )
+    return events
+
+
+def _placement_bound_events(rank, placement, global_origin_ns):
+    """Draw each Rank's error bound as slices, not only as metadata.
+
+    The lane says two things a reader needs before comparing Ranks: the outer
+    window the device work provably sits in, and the interval its start can
+    fall in. A gap between two Ranks narrower than the sum of their slacks is
+    undecided, and this is where that is visible.
+    """
+    pid, events = _host_block_lane(rank, 2, "Placement Bound")
+    outer_start_us = (placement.host.start_ns - global_origin_ns) / 1000.0
+    args = placement.metadata()
+    events += [
+        {"args": {"name": "outer window"}, "cat": "__metadata", "name": "thread_name", "ph": "M", "pid": pid, "tid": 0},
+        {
+            "args": {"name": "placement slack"},
+            "cat": "__metadata",
+            "name": "thread_name",
+            "ph": "M",
+            "pid": pid,
+            "tid": 1,
+        },
+        {
+            "name": f"{containment.RUNNER_SPAN} (rank{rank})",
+            "cat": "containment",
+            "ph": "X",
+            "pid": pid,
+            "tid": 0,
+            "ts": outer_start_us,
+            "dur": placement.host.duration_ns / 1000.0,
+            "args": args,
+        },
+        {
+            "name": f"slack {placement.slack_ns / 1000.0:.1f} us",
+            "cat": "containment",
+            "ph": "X",
+            "pid": pid,
+            "tid": 1,
+            "ts": outer_start_us,
+            "dur": placement.slack_ns / 1000.0,
+            "args": args,
+        },
+    ]
+    return events
 
 
 def _load_rank_local_artifacts(records_path):
@@ -3622,8 +3950,10 @@ def _load_rank_local_artifacts(records_path):
     }
 
 
-def _namespace_rank_trace(trace, rank):
-    pid_base = rank * _RANK_PID_STRIDE
+def _namespace_rank_trace(trace, rank, slack_ns):
+    # One stride above the Host block, so `rank0 / Worker View` still sorts
+    # below every Rank's placement window.
+    pid_base = (rank + 1) * _RANK_PID_STRIDE
     for event in trace.get("traceEvents", []):
         if "pid" in event:
             # Every single-Rank view pid must fit inside one stride, or two Ranks
@@ -3637,6 +3967,7 @@ def _namespace_rank_trace(trace, rank):
             if name:
                 event["args"]["name"] = f"rank{rank} / {name}"
         elif event.get("ph") == "M" and event.get("name") == "process_sort_index":
+            # Mirrors the pid, which is what actually orders the groups.
             sort_index = int(event.get("args", {}).get("sort_index", 0))
             event["args"]["sort_index"] = pid_base + sort_index
         for id_field in ("id", "bind_id"):
@@ -3646,7 +3977,13 @@ def _namespace_rank_trace(trace, rank):
         # identity is already encoded in the PID, so adding it to ``ph: C``
         # would create a bogus constant counter alongside the real values.
         if event.get("ph") not in ("M", "C"):
-            event.setdefault("args", {})["rank"] = rank
+            args = event.setdefault("args", {})
+            args["rank"] = rank
+            # The bound belongs on the slice a reader clicks, not only in the
+            # document's metadata: it is what separates a real displacement
+            # between two Ranks from the width of their placement. The full
+            # record stays in `metadata.ranks[]`, which this keys into by rank.
+            args["slack_ns"] = slack_ns
     return trace
 
 
@@ -3656,24 +3993,70 @@ def _generate_l3_trace(args, root):  # noqa: PLR0912
 
     rank_inputs, pairing_metadata = _discover_l3_rank_inputs(root, args.dispatch, args.dispatch_id)
     raw_inputs = {}
+    rank_identities = {}
+    rank_host_pids = {}
     clock_domains = set()
-    origins = []
     for rank, records_path in rank_inputs:
         with records_path.open() as f:
             raw_inputs[rank] = json.load(f)
-        data = _decode_perf_data(raw_inputs[rank])
-        clock_domain, origin_ns = _validate_l3_rank_data(rank, records_path, data)
-        clock_domains.add(clock_domain)
-        origins.append(origin_ns)
-    if len(clock_domains) != 1:
-        raise ValueError(f"Rank inputs use different Host clock domains: {sorted(clock_domains)}")
+        # The sidecar names both halves of the pairing: `host_pid` is the
+        # ChipWorker child that served this capture, and the dispatch key is
+        # which of that child's invocations it was. The Host log's root
+        # `chip.run` span names the second, and its filename the first, so the
+        # two artifacts pair exactly instead of by how well their device
+        # windows happen to fit.
+        sidecar = _load_dispatch_identity(records_path.parent)
+        identity = containment.capture_identity(sidecar)
+        if identity is not None:
+            rank_identities[rank] = identity
+        host_pid = (sidecar or {}).get("host_pid")
+        if host_pid is not None:
+            rank_host_pids[rank] = int(host_pid)
+        clock_domain = _rank_clock_domain(rank, records_path, raw_inputs[rank])
+        if clock_domain is not None:
+            clock_domains.add(clock_domain)
+    if len(clock_domains) > 1:
+        raise ValueError(
+            f"Rank inputs come from different Host clocks ({sorted(clock_domains)}), so their windows are not "
+            "comparable. Placing them on one axis needs the window of the level that dispatched to both — the "
+            "cross-host splice is not implemented."
+        )
 
-    global_origin_ns = min(origins)
-    all_events = []
+    host_logs = _discover_host_logs(root, args.host_log)
+    placements, host_pairing, host_spans = _place_rank_captures(
+        host_logs, raw_inputs, rank_identities, rank_host_pids, _parse_rank_pid_pins(args.rank_pid)
+    )
+    # The Host log holds several processes; each Rank draws only the spans of
+    # the invocation its capture was paired with.
+    spans_by_invocation = defaultdict(list)
+    for span in host_spans:
+        spans_by_invocation[(span.pid, span.inv)].append(span)
+
+    # What the Ranks occupy on the Host axis. It bounds the origin below and
+    # selects which of the dispatching processes' spans belong to this merge.
+    rank_spans = [
+        span
+        for placement in placements.values()
+        for span in spans_by_invocation[(placement.host.pid, placement.host.inv)]
+        if not span.is_device
+    ]
+    # The axis starts at the earliest thing drawn on it. That is not always a
+    # placement: a Rank's `chip.run` opens before the `runner_run` window
+    # inside it, and the scheduler's `node.dispatch` opens before that again,
+    # so an origin taken from the windows alone would put both at a negative
+    # timestamp.
+    window_lo = min([int(placement.place_lo_ns) for placement in placements.values()] + [s.ts for s in rank_spans])
+    window_hi = max(
+        [int(placement.host.end_ns) for placement in placements.values()] + [s.ts + s.dur for s in rank_spans]
+    )
+    chip_pids = {placement.host.pid for placement in placements.values()}
+    dispatcher_spans = _dispatcher_spans(host_spans, chip_pids, (window_lo, window_hi))
+    global_origin_ns = min([window_lo] + [span.ts for span in dispatcher_spans])
+    all_events = _dispatcher_block_events(dispatcher_spans, global_origin_ns)
     rank_metadata = []
-    pre_group_durations = []
     for rank, records_path in rank_inputs:
-        data = _decode_perf_data(raw_inputs[rank], timeline_origin_ns=global_origin_ns)
+        placement = placements[rank]
+        data = _decode_perf_data(raw_inputs[rank], timeline_origin_ns=global_origin_ns, placement=placement)
         artifacts = _load_rank_local_artifacts(records_path)
         dispatch_identity = artifacts["dispatch_identity"]
         trace = generate_chrome_trace_json(
@@ -3695,51 +4078,53 @@ def _generate_l3_trace(args, root):  # noqa: PLR0912
             deps_block_map=artifacts["deps_block_map"],
             emit_overhead=args.overhead,
         )
-        _namespace_rank_trace(trace, rank)
+        _namespace_rank_trace(trace, rank, int(round(placement.slack_ns)))
         all_events.extend(trace["traceEvents"])
+        invocation = spans_by_invocation[(placement.host.pid, placement.host.inv)]
+        all_events.extend(
+            _host_call_tree_events(
+                rank, placement, [span for span in invocation if not span.is_device], global_origin_ns
+            )
+        )
+        all_events.extend(
+            _host_device_phase_events(
+                rank, placement, [span for span in invocation if span.is_device], global_origin_ns
+            )
+        )
+        all_events.extend(_placement_bound_events(rank, placement, global_origin_ns))
 
         timeline = data["timeline_metadata"]
-        alignment = timeline["clock_alignment"]
-        durations = alignment.get("anchor_group_duration_ns") or {}
-        pre_duration = durations.get("pre_host_orchestration")
-        if pre_duration is not None:
-            pre_group_durations.append(int(pre_duration))
         rank_metadata.append(
             {
                 "rank": rank,
                 "input": str(records_path),
                 "trace_status": timeline["trace_status"],
                 "source_timeline_origin_ns": timeline["source_timeline_origin_ns"],
-                "clock_alignment": alignment,
+                "placement": placement.metadata(),
+                "host_pairing": host_pairing[rank],
                 "host_capture": timeline.get("host_capture"),
                 "dispatch_identity": dispatch_identity,
             }
         )
 
-    # Worst case for an interval read between two Ranks: each end carries its
-    # own Rank's alignment error, so the two largest bound any pair. null means
-    # the bound is unknown — fewer than two Ranks reported one — never that the
-    # comparison is exact.
-    uncertainties = sorted(
-        int(rank["clock_alignment"]["max_uncertainty_ns"])
-        for rank in rank_metadata
-        if rank["clock_alignment"].get("max_uncertainty_ns") is not None
-    )
     metadata = {
-        "layout": "same_host_multi_rank",
+        "layout": "containment_spliced_multi_rank",
         "dispatch": args.dispatch,
         "dispatch_id": args.dispatch_id,
-        "host_clock_domain_id": next(iter(clock_domains)),
+        "host_clock_domain_id": next(iter(clock_domains)) if clock_domains else None,
+        "host_logs": [str(path) for path in host_logs],
         "global_origin_ns": global_origin_ns,
+        # The processes that dispatched to these Ranks, drawn on the Host clock
+        # directly — no containment, so no slack applies to their lanes.
+        "dispatcher_pids": sorted({span.pid for span in dispatcher_spans}),
         "rank_count": len(rank_metadata),
         **pairing_metadata,
         "trace_status": "partial" if any(rank["trace_status"] != "complete" for rank in rank_metadata) else "complete",
         "ranks": rank_metadata,
-        "cross_rank_uncertainty_ns": sum(uncertainties[-2:]) if len(uncertainties) >= 2 else None,
-        "pre_anchor_group_duration_spread_ns": (
-            max(pre_group_durations) - min(pre_group_durations) if len(pre_group_durations) >= 2 else 0
-        ),
-        "pre_anchor_group_duration_max_ns": max(pre_group_durations) if pre_group_durations else None,
+        # Worst case for an interval read between two Ranks: each end carries
+        # its own Rank's slack, so the two largest bound any pair. null means
+        # fewer than two Ranks were placed, never that the comparison is exact.
+        "cross_rank_uncertainty_ns": containment.cross_uncertainty_ns(placements.values()),
     }
     output_path = _resolve_output_path(args, Path(root))
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3761,6 +4146,22 @@ def main():
             print("\n✓ Multi-Rank conversion complete")
             print(f"  Input:  {input_path}")
             print(f"  Ranks:  {', '.join('rank' + str(item['rank']) for item in rank_metadata)}")
+            # The bound belongs next to the output, not only inside it: a
+            # reader who compares two Ranks needs to know it before they look.
+            slacks = [item["placement"]["slack_ns"] for item in rank_metadata]
+            width = (
+                f"{min(slacks) / 1000.0:.1f}"
+                if min(slacks) == max(slacks)
+                else (f"{min(slacks) / 1000.0:.1f}–{max(slacks) / 1000.0:.1f}")
+            )
+            bound = f"  Bound:  each Rank placed within {width} us of its {containment.RUNNER_SPAN} window"
+            # Same rule the document publishes as `cross_rank_uncertainty_ns`,
+            # so a one-Rank merge cannot print a threshold the document calls
+            # unknown — one capture's own slack bounds nothing across Ranks.
+            cross_ns = containment.sum_two_widest_slacks(slacks)
+            if cross_ns is not None:
+                bound += f"; a cross-Rank gap under {cross_ns / 1000.0:.1f} us is undecided"
+            print(bound)
             print(f"  Output: {output_path}")
             print(f"\nTo visualize: Open https://ui.perfetto.dev/ and drag in {output_path}")
             return 0

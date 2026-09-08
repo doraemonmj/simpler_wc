@@ -9,6 +9,7 @@
 """Tests for CallConfig and ChipWorker state machine."""
 
 import json
+import os
 import threading
 
 import pytest
@@ -533,6 +534,9 @@ class TestMailboxConfigRoundtrip:
             "task_slot": 5,
             "group_index": 2,
             "group_size": 4,
+            # The writer runs in the ChipWorker child, so this is that child's
+            # own pid — the one whose `host.<pid>.log` brackets the capture.
+            "host_pid": os.getpid(),
             "chip_rank": 2,
             "local_capture_index": 7,
             "endpoint_dispatch_id": 41,

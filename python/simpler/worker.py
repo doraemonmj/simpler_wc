@@ -2041,6 +2041,14 @@ def _write_dispatch_identity_sidecar(
         "task_slot": task_slot,
         "group_index": group_index,
         "group_size": group_size,
+        # This runs in the ChipWorker child serving the dispatch, so the pid is
+        # that child's own — the one whose `host.<pid>.log` holds the
+        # `chip.run.runner_run` window bracketing this capture's device work.
+        # Nothing else joins the two artifacts: the members of one group share
+        # `run_id`, `endpoint_dispatch_id`, `pipeline_slot` and `generation`, so
+        # without this the offline placement cannot tell one Rank's window from
+        # another's when both run the same shape.
+        "host_pid": os.getpid(),
         "chip_rank": chip_rank,
         "local_capture_index": capture_index,
         "endpoint_dispatch_id": endpoint_dispatch_id,

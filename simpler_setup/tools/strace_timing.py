@@ -1267,6 +1267,32 @@ def to_host_swimlane(spans, anchors=None):
     return _trace_document(events, anchors_by_pid, unalignedDeviceSpans=unaligned_device_spans)
 
 
+def host_process_lanes(spans):
+    """Group Host spans into the per-process thread lanes the swimlane draws.
+
+    Public because the cross-Rank merge draws the same lanes for the processes
+    that dispatched to the Ranks — the L3 scheduler, and any level above it —
+    beside the Ranks themselves. Those spans are already on CLOCK_MONOTONIC, so
+    they need no placement and carry no slack.
+
+    Returns ``{pid: {"label", "lanes": {tid: name}, "spans": [(span, attrs, tid)]}}``.
+    """
+    entries = [(span, _parsed_attrs(span)) for span in spans if not span.is_device]
+    threads = sorted({(span.pid, span.tid) for span, _ in entries})
+    if not threads:
+        return {}
+    lane_of, lane_names = _assign_lanes(entries, threads)
+    processes = {}
+    for pid in sorted({span.pid for span, _ in entries}):
+        on_process = [(span, attrs) for span, attrs in entries if span.pid == pid]
+        processes[pid] = {
+            "label": _process_label(pid, [span for span, _ in on_process]),
+            "lanes": {tid: name for (lane_pid, tid), name in sorted(lane_names.items()) if lane_pid == pid},
+            "spans": [(span, attrs, lane_of[id(span)]) for span, attrs in on_process],
+        }
+    return processes
+
+
 def _print_agg_tree(invs, stream=sys.stdout):
     """Print a callable's spans as a nested tree built from the dotted span
     names (so e.g. ``chip.run.bind.args`` nests under ``chip.run.bind``),

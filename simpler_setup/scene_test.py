@@ -1046,8 +1046,11 @@ def _run_swimlane_converter(
     dispatch: str | None = None,
     dispatch_id: str | None = None,
     output_path: Path | None = None,
-) -> None:
+) -> bool:
     """Invoke the bundled swimlane converter as a subprocess.
+
+    Returns whether it produced its output, so a caller with a narrower fallback
+    than "give up" can take it.
 
     When ``input_path`` is given, the converter derives its output filename from
     the input's timestamp (see ``swimlane_converter._resolve_output_path``).
@@ -1080,21 +1083,18 @@ def _run_swimlane_converter(
         if result.stdout:
             logger.info(result.stdout)
         logger.info("Swimlane JSON generation completed")
+        return True
     except subprocess.CalledProcessError as e:
         logger.warning(f"Failed to generate swimlane JSON: {e}")
         if e.stdout:
             logger.debug(f"stdout: {e.stdout}")
         if e.stderr:
-            logger.debug(f"stderr: {e.stderr}")
+            logger.warning(f"stderr: {e.stderr.strip()}")
+        return False
 
 
 def _sanitize_for_filename(s: str) -> str:
     return "".join(c if c.isalnum() or c in "._-" else "_" for c in s)
-
-
-# Host/Device clock anchors — and therefore a common cross-Rank timeline — exist
-# only at this chip-swimlane level.
-_MULTI_RANK_SWIMLANE_LEVEL = 4
 
 
 def _rank_dirs(output_prefix: Path) -> list[Path]:
@@ -1118,15 +1118,6 @@ def _rank_capture_dirs(output_prefix: Path) -> list[Path]:
     return captures
 
 
-def _capture_swimlane_level(records_path: Path) -> int | None:
-    """Return one capture's ``chip_swimlane_level``, or None if it is unreadable."""
-    try:
-        with records_path.open() as file:
-            return int(json.load(file)["chip_swimlane_level"])
-    except (OSError, KeyError, TypeError, ValueError):
-        return None
-
-
 def _convert_rank_swimlanes(
     case_label: str,
     output_prefix: Path,
@@ -1137,11 +1128,15 @@ def _convert_rank_swimlanes(
 ) -> None:
     """Convert the ``rankN/dN`` captures below one L3 case prefix.
 
-    Cross-Rank merging is what puts every Rank on a common Host timeline, and
-    only level 4 carries the Host/Device clock anchors that make that possible.
-    A capture known to be below level 4 is therefore converted on its own Rank's
-    relative timeline instead. An unreadable level is left to the converter to
-    reject, so a malformed capture still fails loudly rather than downgrading.
+    Cross-Rank merging puts every Rank on a common Host timeline by placing each
+    one inside the ``chip.run.runner_run`` window that contained it, so it needs
+    the run's Host log rather than a particular capture level.
+
+    A merge the converter cannot make — no Host log under the prefix, or
+    captures that pair ambiguously with the invocations in it — still leaves
+    every Rank's own capture readable, so each is then converted on its own
+    relative timeline. Losing the common axis should cost the common axis, not
+    the whole case's swimlane.
     """
     from simpler_setup.tools.swimlane_converter import discover_l3_conversion_targets  # noqa: PLC0415
 
@@ -1154,24 +1149,6 @@ def _convert_rank_swimlanes(
     captures = [path for path in _rank_capture_dirs(output_prefix) if (path / "chip_swimlane_records.json").is_file()]
     if not captures:
         logger.warning(f"[{case_label}] no Rank capture is present under {output_prefix}")
-        return
-
-    known_levels = {
-        level
-        for level in (_capture_swimlane_level(path / "chip_swimlane_records.json") for path in captures)
-        if level is not None
-    }
-    if known_levels - {_MULTI_RANK_SWIMLANE_LEVEL}:
-        logger.warning(
-            f"[{case_label}] cross-Rank merging needs --enable-chip-swimlane {_MULTI_RANK_SWIMLANE_LEVEL} on every "
-            f"Rank (found {sorted(known_levels)}); converting each Rank capture on its own timeline instead"
-        )
-        for capture_dir in captures:
-            _run_swimlane_converter(
-                input_path=capture_dir / "chip_swimlane_records.json",
-                func_names_path=dump_name_map(capture_dir),
-                enable_overhead=enable_overhead,
-            )
         return
 
     try:
@@ -1188,13 +1165,20 @@ def _convert_rank_swimlanes(
         # are dumped in place and never passed as a global override.
         for capture_dir in target["capture_dirs"]:
             dump_name_map(capture_dir)
-        _run_swimlane_converter(
+        merged = _run_swimlane_converter(
             input_path=output_prefix,
             enable_overhead=enable_overhead,
             dispatch=target["dispatch"],
             dispatch_id=target["dispatch_id"],
             output_path=output_prefix / f"{target['output_stem']}.json" if len(targets) > 1 else None,
         )
+        if not merged:
+            for capture_dir in target["capture_dirs"]:
+                _run_swimlane_converter(
+                    input_path=capture_dir / "chip_swimlane_records.json",
+                    func_names_path=dump_name_map(capture_dir),
+                    enable_overhead=enable_overhead,
+                )
 
 
 def _convert_case_swimlane(
@@ -2021,7 +2005,16 @@ class SceneTestCase:
                     orch_fn(orch, _ns, _test_args, _config)
 
                 with _temporary_env(self._resolve_env()):
-                    worker.run(task_orch)
+                    # The config reaches the chips through the orchestration
+                    # closure, but this process's own `[STRACE]` log directory
+                    # comes from the config the submit is given
+                    # (`Worker._submit_l3_locked`). Without it the L3
+                    # scheduler's `node.*` spans go to stderr while its chip
+                    # children write `host.<pid>.log` beside the captures, and
+                    # the merged swimlane has no scheduler lane to draw. At L3
+                    # the submit's own config is read for nothing else, and
+                    # `task_orch` discards the copy it is handed.
+                    worker.run(task_orch, config=config)
 
                 if not skip_golden:
                     self.compare_outputs(test_args, golden_args, all_tensor_names, params)

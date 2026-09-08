@@ -197,10 +197,11 @@ rejected until the layout also carries a node namespace. Every Rank must expose
 the same complete set of local capture indexes; the postprocessor refuses
 asymmetric sets instead of guessing pairings.
 
-Cross-Rank merging needs `--enable-chip-swimlane 4` on every Rank, because the
-Host/Device clock anchors that level 4 collects are what put the Ranks on a
-common timeline. A lower level still captures per Rank; the postprocessor then
-converts each `rankN/dN` capture on its own relative timeline and says so.
+Cross-Rank merging needs the run's Host log rather than a particular capture
+level: what puts the Ranks on a common timeline is each one's
+`chip.run.runner_run` window, whose endpoints are `CLOCK_MONOTONIC` and
+same-host cross-process comparable. A lower level simply has fewer device
+streams to draw inside that window.
 
 `chip_swimlane_records.json` carries the raw records. **There are two
 layers to be aware of:**
@@ -407,11 +408,61 @@ python -m simpler_setup.tools.swimlane_converter \
 ```
 
 For directory input, the default output is `dfx_outputs/l3_swimlane.json`.
-Every Rank must be a level-4 capture under
-`rankN/<dispatch>/`, with successful clock anchors and the same
-`metadata.host_clock_domain_id`. The converter preserves real Rank start skew,
-adds Rank-specific PID/name/flow namespaces, and reports clock uncertainty and
-anchor-group observer overhead in trace metadata.
+Every Rank must sit under `rankN/<dispatch>/` and report the same
+`metadata.host_clock_domain_id`, and the run's `host.<pid>.log` files must be
+readable beside them (`--host-log` overrides where they are looked for). Those
+logs hold every invocation of the run, so which one a capture belongs to is read
+off the dispatch both artifacts name — `dispatch_identity.json` on one side, the
+root `chip.run` span's attributes on the other. `dispatch_id` counts per worker
+and so is shared by the members of one group round; which Rank of that round is
+then decided by the device windows each capture fills, or pinned with
+`--rank-pid RANK=PID[:INV]`. The
+converter preserves real Rank start skew, adds Rank-specific PID/name/flow
+namespaces, and reports each Rank's placement `slack_ns` plus the summed
+`cross_rank_uncertainty_ns` in trace metadata.
+
+**Placement is by containment, and the bound is published.** A Rank's device
+records are drawn at the earliest Host ns its window allows; the window's spare
+width — `runner_run.dur − device_wall.dur` — is how far the whole block could
+slide, and appears as `slack_ns` on every drawn slice and as a "Placement
+Bound" lane in the trace.
+
+The Host block comes first and has two parts. Above the Ranks are the
+processes that dispatched to them — the L3 scheduler's `node.*` lanes, and an
+L4's `network1.*` above those. A run binds every process's host log to the same
+case root, so these are already beside the Rank captures; they are Host
+CLOCK_MONOTONIC and same-host cross-process comparable, so they are drawn
+directly and **carry no `slack_ns` at all** — containment is a device-clock
+term. Their logs cover the whole run while the merge covers one dispatch, so
+the invocations drawn are those overlapping the Ranks' own span on the axis,
+and `metadata.dispatcher_pids` names the processes they came from.
+
+Then each Rank contributes three lanes read off its own Host log — its
+`chip.run` call tree (on the Host clock, no placement error), the `clk=dev`
+phases that log carries (placed, and covering the head of the run the capture
+records nothing for), and that window with its slack. All of it takes the first
+block of view pids, so everything from the Host log groups above every Chip
+view rather than one Rank at a time between them. Perfetto orders process groups by
+pid and ignores `process_sort_index`, so the pid assignment *is* the layout.
+`strace_timing --swimlane` is unchanged and still writes its own single-process
+view. The shape *inside* a Rank is exact: the `device_wall.sched` window
+appears in both the Host log (relative ns) and the capture (absolute cycles), so
+the two device timelines join to within the few µs between "the phase opened"
+and "the first record inside it", reported as `join.residual_ns`.
+
+Ranks on two different Hosts are refused rather than spliced. Doing it needs the
+window of the level that dispatched to both — `network1.dispatch` …
+`network1.complete` — plus the one error term containment does not cover: two
+machines' counters differ by 10–100 ppm, which distorts a duration spliced into
+the other machine's window in proportion to that window's length (0.4–4 µs over
+40 ms). Neither is implemented.
+
+Two consequences worth stating plainly. Slack is a property of the *outer span*,
+not of the method: the collector teardown that `reap_run()` performs after the
+device is done falls inside `runner_run`, so a capture-enabled run's slack
+absorbs it and can reach hundreds of ms. And a gap between two Ranks narrower
+than the sum of their slacks is undecided, not zero — containment cannot be
+wrong, only loose.
 
 For new group captures, `--dispatch-id RUN_ID:TASK_SLOT` selects the common
 parent DAG node and resolves each Rank's actual `dN` path through
@@ -420,6 +471,11 @@ remains the compatibility selector for old captures and for independently
 submitted per-Rank tasks; it fails if available sidecars show that the selected
 paths belong to different parent groups.
 
+> **The offline tools no longer read `clock_anchors`.** Placement comes from
+> span containment, which needs no calibration and no anchor sampling. The
+> runtime still collects and serializes them as described below, and they remain
+> in the on-disk schema; nothing in `simpler_setup/tools` consumes them.
+
 Host-orchestrated level-4 runs retain their existing clock anchors. For
 Device/AICPU orchestration, anchors are additionally enabled only when the
 ChipWorker marks the capture with `CallConfig.capture_clock_anchors`, which it
@@ -427,6 +483,9 @@ does for an L3 chip-swimlane capture, at the common launch boundary before
 collectors and kernels start. Both modes sample again after AICPU/AICore
 execution completes. Existing single-card Device/AICPU level-4 captures
 therefore keep their prior relative timeline and do not pay the new anchor cost.
+The per-launch cost of that sampling is 475–696 us, of which the cold first
+sample is 83–89% because `ClockCorrelationProvider` is built and destroyed per
+launch — larger than the placement slack containment publishes without it.
 
 `capture_clock_anchors` says only *what the runtime does* — sample the two
 clocks — never why. Rank, group and merge are concepts of the layer above: the
@@ -447,9 +506,8 @@ takes it at the earliest point preceding every device timestamp it records:
 
 Both close on `post_device_execution`. So the two runtimes' calibrated intervals
 are not comparable in length, and a `host_build_graph` interpolation spans work
-a `tensormap_and_ringbuffer` one does not. This does not affect
-`max_uncertainty_ns`, which depends only on each anchor group's own sampling
-RTT. The serialized position name `pre_host_orchestration` predates the
+a `tensormap_and_ringbuffer` one does not. The serialized position name
+`pre_host_orchestration` predates the
 Device/AICPU case — read it as "start of the calibrated interval", not as a
 claim about Host orchestration.
 

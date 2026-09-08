@@ -13,7 +13,27 @@ from pathlib import Path
 
 import pytest
 
+from simpler_setup.tools import containment
 from simpler_setup.tools import swimlane_converter as sc
+from simpler_setup.tools.strace_timing import parse_spans, to_host_swimlane
+
+
+def _containment_placement(document, *, runner_start_ns=1_000, runner_dur_ns=5_000, wall_ns=2_000, sched=(700, 100)):
+    """Place a capture inside a synthetic Host window, the way the tools do.
+
+    The `sched` span is what joins the two artifacts: the capture records the
+    same window in absolute cycles, so the pair fixes the offset between the two
+    device timelines without any clock anchor.
+    """
+    prefix = "[mono_ns=1000][T0x1][TIMING] emit_host_span: "
+    head = "[STRACE] v=1 pid=42 tid=42 inv=1 hid=abc"
+    lines = [
+        f"{prefix}{head} depth=1 name=chip.run.runner_run ts={runner_start_ns} dur={runner_dur_ns} ",
+        f"{prefix}{head} depth=2 name=chip.run.runner_run.device_wall ts=0 dur={wall_ns} clk=dev",
+        f"{prefix}{head} depth=3 name=chip.run.runner_run.device_wall.sched ts={sched[0]} dur={sched[1]} clk=dev",
+    ]
+    (window,) = containment.host_windows(parse_spans(lines))
+    return containment.place(window, containment.capture_windows(document))
 
 
 def _task_row(task_id, core_id, core_type="aiv", *, func_id=0, dispatch=10.0, start=11.0, end=20.0, receive=10.5):
@@ -111,10 +131,34 @@ def _generate_trace(tasks, deps_edges, deps_block_map, tmp_path):
     return out
 
 
+def _write_l3_host_log(root, rank, *, host_shift_ns, sched_window_ns):
+    """The Host log that brackets one Rank's device work.
+
+    Containment reads the outer window out of this, so a Rank capture without
+    one cannot be placed. The `sched` window differs per Rank, which is what
+    lets the two artifacts be paired without either naming the other.
+    """
+    pid = 1000 + rank
+    prefix = f"[mono_ns={host_shift_ns + 1_000}][T0x1][TIMING] emit_host_span: "
+    lines = [
+        f"{prefix}[STRACE] v=1 pid={pid} tid={pid} inv=1 hid=abc depth=1 "
+        f"name=chip.run.runner_run ts={host_shift_ns + 1_000} dur=8000 ",
+        f"{prefix}[STRACE] v=1 pid={pid} tid={pid} inv=1 hid=abc depth=2 "
+        f"name=chip.run.runner_run.device_wall ts=0 dur=2000 clk=dev",
+        f"{prefix}[STRACE] v=1 pid={pid} tid={pid} inv=1 hid=abc depth=3 "
+        f"name=chip.run.runner_run.device_wall.sched ts=700 dur={sched_window_ns} clk=dev",
+    ]
+    (root / f"host.{pid}.log").write_text("\n".join(lines) + "\n")
+
+
 def _write_l3_rank(root, rank, *, host_shift_ns, task_id, clock_domain="same-boot", dispatch="d0"):
     rank_dir = root / f"rank{rank}" / dispatch
     rank_dir.mkdir(parents=True)
     device_base = 100 + rank * 100_000
+    # One scheduler phase per Rank, each a different length, so the Host log's
+    # `sched` window identifies which Rank it brackets.
+    sched_record_ns = 50 + rank * 100
+    _write_l3_host_log(root, rank, host_shift_ns=host_shift_ns, sched_window_ns=sched_record_ns + 50)
     records = {
         "chip_swimlane_level": 4,
         "metadata": {
@@ -133,32 +177,17 @@ def _write_l3_rank(root, rank, *, host_shift_ns, task_id, clock_domain="same-boo
                 "dropped_records": 0,
                 "error": None,
             },
-            "clock_anchors": {
-                "device_timestamp_unit": "syscnt_cycles",
-                "samples": [
-                    {
-                        "position": "pre_host_orchestration",
-                        "sample_idx": 0,
-                        "host_before_ns": host_shift_ns + 990,
-                        "device_cycles": device_base,
-                        "host_after_ns": host_shift_ns + 1_010,
-                        "error": None,
-                    },
-                    {
-                        "position": "post_device_execution",
-                        "sample_idx": 0,
-                        "host_before_ns": host_shift_ns + 8_980,
-                        "device_cycles": device_base + 8_000,
-                        "host_after_ns": host_shift_ns + 9_020,
-                        "error": None,
-                    },
-                ],
-            },
         },
         "aicore_tasks": [[0, task_id, 1, device_base + 1_000, device_base + 1_100, 0]],
         "aicpu_tasks": [[0, 1, device_base + 900, device_base + 1_200]],
         "aicpu_scheduler_phases": [
-            [{"kind": "dispatch", "start_cycles": device_base + 800, "end_cycles": device_base + 850}]
+            [
+                {
+                    "kind": "dispatch",
+                    "start_cycles": device_base + 800,
+                    "end_cycles": device_base + 800 + sched_record_ns,
+                }
+            ]
         ],
         "host_orchestrator_phases": [
             [
@@ -210,12 +239,18 @@ def test_l3_directory_merge_uses_common_host_origin_and_rank_namespaces(tmp_path
     assert output_path == output
     assert [item["rank"] for item in rank_metadata] == [0, 1]
     trace = json.loads(output.read_text())
-    assert trace["metadata"]["global_origin_ns"] == 1_500
+    # The axis starts at the earliest window any Rank can have begun in, and
+    # each Rank is drawn at the earliest position its own window allows.
+    assert trace["metadata"]["global_origin_ns"] == 1_000
     assert trace["metadata"]["host_clock_domain_id"] == "same-boot"
-    assert trace["metadata"]["cross_rank_uncertainty_ns"] == 40
-    assert trace["metadata"]["pre_anchor_group_duration_spread_ns"] == 0
-    assert trace["metadata"]["pre_anchor_group_duration_max_ns"] == 20
+    assert trace["metadata"]["layout"] == "containment_spliced_multi_rank"
+    # 8 us of window around a 2 us run wall, twice: either end of a cross-Rank
+    # read carries its own Rank's 6 us.
+    assert trace["metadata"]["cross_rank_uncertainty_ns"] == 12_000
     assert trace["metadata"]["dispatch_pairing"] == "local_capture_index"
+    assert [item["placement"]["slack_ns"] for item in rank_metadata] == [6_000, 6_000]
+    assert [item["placement"]["outer_pid"] for item in rank_metadata] == [1_000, 1_001]
+    assert [item["host_pairing"]["source"] for item in rank_metadata] == ["device_window_fit"] * 2
 
     process_names = {
         event["args"]["name"]
@@ -229,10 +264,106 @@ def test_l3_directory_merge_uses_common_host_origin_and_rank_namespaces(tmp_path
         for event in trace["traceEvents"]
         if event.get("ph") == "X" and event.get("cat") == "event" and event.get("pid") % 100 == 4
     }
-    assert worker_events[7]["pid"] == 4
-    assert worker_events[7]["ts"] == 0.5
-    assert worker_events[8]["pid"] == 104
-    assert worker_events[8]["ts"] == 10.5
+    assert worker_events[7]["pid"] == 104
+    assert worker_events[7]["ts"] == 0.925
+    assert worker_events[8]["pid"] == 204
+    assert worker_events[8]["ts"] == 10.925
+    # Every drawn slice carries the bound its Rank was placed under, so a
+    # displacement between two Ranks can be read against it without leaving
+    # the slice. The full record stays in `metadata.ranks[]`.
+    assert [worker_events[task]["args"]["slack_ns"] for task in (7, 8)] == [6_000, 6_000]
+    assert {
+        event["args"]["slack_ns"]
+        for event in trace["traceEvents"]
+        if event.get("ph") == "X" and event["pid"] >= sc._RANK_PID_STRIDE
+    } == {6_000}
+
+
+def test_l3_directory_merge_groups_the_two_clock_domains_into_blocks(tmp_path):
+    """Everything read off the Host log first, then the Chip captures.
+
+    Interleaving them one Rank at a time puts a `CLOCK_MONOTONIC` window
+    between two device timelines, which is the comparison the merge exists to
+    make and the one a reader should not have to scroll past.
+    """
+    root = tmp_path / "dfx_outputs"
+    _write_l3_rank(root, 0, host_shift_ns=0, task_id=7)
+    _write_l3_rank(root, 1, host_shift_ns=10_000, task_id=8)
+    output = tmp_path / "l3.json"
+    args = sc._build_parser().parse_args([str(root), "--dispatch", "d0", "-o", str(output)])
+
+    sc._generate_l3_trace(args, root)
+
+    events = json.loads(output.read_text())["traceEvents"]
+    names = {event["pid"]: event["args"]["name"] for event in events if event.get("name") == "process_name"}
+    # Perfetto orders process groups by pid and ignores `process_sort_index`,
+    # so the pid order is the layout. Assert on it, not on the sort index.
+    lanes = [names[pid] for pid in sorted(names)]
+    assert lanes[:6] == [
+        "rank0 / Host",
+        "rank0 / Device phases (placed)",
+        "rank0 / Placement Bound",
+        "rank1 / Host",
+        "rank1 / Device phases (placed)",
+        "rank1 / Placement Bound",
+    ], lanes
+    assert all(name.startswith(("rank0 / ", "rank1 / ")) for name in lanes[6:])
+    assert not any(name.endswith(("Host", "Device phases (placed)", "Placement Bound")) for name in lanes[6:]), lanes
+    # The sort index mirrors the pid, for any viewer that does read it.
+    sort = {event["pid"]: event["args"]["sort_index"] for event in events if event.get("name") == "process_sort_index"}
+    assert sorted(sort, key=lambda pid: sort[pid]) == sorted(sort)
+
+
+def test_l3_directory_merge_draws_the_host_log_beside_the_capture(tmp_path):
+    """One trace carries both clock domains, joined by the placement.
+
+    The Host call tree is on its own clock and carries no placement error; the
+    `clk=dev` phases the same log holds are placed into the window and cover
+    the head of the run the capture records nothing for.
+    """
+    root = tmp_path / "dfx_outputs"
+    _write_l3_rank(root, 0, host_shift_ns=0, task_id=7)
+    _write_l3_rank(root, 1, host_shift_ns=10_000, task_id=8)
+    output = tmp_path / "l3.json"
+    args = sc._build_parser().parse_args([str(root), "--dispatch", "d0", "-o", str(output)])
+
+    sc._generate_l3_trace(args, root)
+
+    events = json.loads(output.read_text())["traceEvents"]
+    names = {event["pid"]: event["args"]["name"] for event in events if event.get("name") == "process_name"}
+    slices = [event for event in events if event.get("ph") == "X"]
+    by_lane = {
+        names[pid]: [event for event in slices if event["pid"] == pid]
+        for pid in names
+        if names[pid].startswith("rank0")
+    }
+    # The window is the same interval whether it is read off the Host lane or
+    # off the bound lane — the second is drawn from the first.
+    runner = next(e for e in by_lane["rank0 / Host"] if e["name"] == "chip.run.runner_run")
+    outer = next(e for e in by_lane["rank0 / Placement Bound"] if e["name"].startswith("chip.run.runner_run ("))
+    assert (runner["ts"], runner["dur"]) == (outer["ts"], outer["dur"])
+    # The placed run wall starts at the window it was placed in, per the
+    # lower-bound placement policy.
+    wall = next(e for e in by_lane["rank0 / Device phases (placed)"] if e["name"].endswith("device_wall"))
+    assert wall["ts"] == runner["ts"]
+    assert wall["args"]["slack_ns"] == 6_000
+    # Nothing is drawn before the axis origin.
+    assert min(event["ts"] for event in slices) == 0.0
+
+
+def test_l3_directory_merge_leaves_the_standalone_host_swimlane_alone(tmp_path):
+    """The merge reads the same log; it does not change what the other tool writes."""
+    root = tmp_path / "dfx_outputs"
+    _write_l3_rank(root, 0, host_shift_ns=0, task_id=7)
+    _write_l3_rank(root, 1, host_shift_ns=10_000, task_id=8)
+    logs = sorted(root.glob("host.*.log"))
+    spans = [span for log in logs for span in parse_spans(log.read_text().splitlines())]
+
+    before = to_host_swimlane(spans)
+    args = sc._build_parser().parse_args([str(root), "--dispatch", "d0", "-o", str(tmp_path / "l3.json")])
+    sc._generate_l3_trace(args, root)
+
+    assert to_host_swimlane(spans) == before
 
 
 def test_l3_directory_merge_keeps_scheduler_streams_and_lifecycle_records(tmp_path):
@@ -398,12 +529,14 @@ def test_rank_namespace_does_not_turn_rank_into_a_counter_series():
         ]
     }
 
-    sc._namespace_rank_trace(trace, 2)
+    sc._namespace_rank_trace(trace, 2, 6_000)
 
     counter, task = trace["traceEvents"]
-    assert counter["pid"] == 202
+    # Rank 2's views land in the third Chip stride: the first is reserved for
+    # the Host-domain block, which has to sort below every Chip view.
+    assert counter["pid"] == 302
     assert counter["args"] == {"AIC": 3, "AIV": 4}
-    assert task["pid"] == 204
+    assert task["pid"] == 304
     assert task["args"]["rank"] == 2
 
 
@@ -411,24 +544,75 @@ def test_rank_namespace_rejects_a_view_pid_wider_than_the_stride():
     trace = {"traceEvents": [{"ph": "X", "pid": sc._RANK_PID_STRIDE, "tid": 1, "args": {}}]}
 
     with pytest.raises(ValueError, match="does not fit the per-Rank stride"):
-        sc._namespace_rank_trace(trace, 1)
+        sc._namespace_rank_trace(trace, 1, 6_000)
 
 
-def test_l3_directory_merge_rejects_different_or_missing_host_clock_domains(tmp_path):
+def test_l3_directory_merge_rejects_ranks_from_different_host_clocks(tmp_path, capsys):
+    """Two Hosts' windows are not on one axis, and containment cannot make them so.
+
+    What would put them there is the window of the level that dispatched to
+    both, which is a level up and not in these artifacts — so this refuses and
+    says which input is missing rather than splicing two unrelated clocks.
+    """
     root = tmp_path / "dfx_outputs"
     _write_l3_rank(root, 0, host_shift_ns=0, task_id=7, clock_domain="boot-a")
     rank1_dir = _write_l3_rank(root, 1, host_shift_ns=10_000, task_id=8, clock_domain="boot-b")
     args = sc._build_parser().parse_args([str(root), "--dispatch", "d0"])
 
-    with pytest.raises(ValueError, match="different Host clock domains"):
+    with pytest.raises(ValueError, match="different Host clocks"):
         sc._generate_l3_trace(args, root)
 
+    # A capture from before the field existed is placed anyway: the merge it is
+    # asked for is same-host by construction, and the warning says so.
     rank1_path = rank1_dir / "chip_swimlane_records.json"
     rank1 = json.loads(rank1_path.read_text())
     rank1["metadata"].pop("host_clock_domain_id")
     rank1_path.write_text(json.dumps(rank1))
-    with pytest.raises(ValueError, match="missing metadata.host_clock_domain_id"):
+    sc._generate_l3_trace(args, root)
+    assert "predates metadata.host_clock_domain_id" in capsys.readouterr().err
+
+
+def test_l3_directory_merge_needs_a_host_log_to_place_ranks(tmp_path):
+    root = tmp_path / "dfx_outputs"
+    _write_l3_rank(root, 0, host_shift_ns=0, task_id=7)
+    _write_l3_rank(root, 1, host_shift_ns=10_000, task_id=8)
+    for log in root.glob("host.*.log"):
+        log.unlink()
+    args = sc._build_parser().parse_args([str(root), "--dispatch", "d0"])
+
+    with pytest.raises(ValueError, match="no host.*log under"):
         sc._generate_l3_trace(args, root)
+
+
+def test_l3_directory_merge_refuses_to_guess_between_look_alike_ranks(tmp_path):
+    """Ranks running the same shape leave nothing to pair them by.
+
+    Neither artifact names the other — the Host log's identity attributes are
+    the dispatch's, identical across the group — so when the device windows
+    match too, guessing would place a Rank's work in another Rank's window.
+    """
+    root = tmp_path / "dfx_outputs"
+    _write_l3_rank(root, 0, host_shift_ns=0, task_id=7)
+    _write_l3_rank(root, 1, host_shift_ns=10_000, task_id=8)
+    _write_l3_host_log(root, 1, host_shift_ns=10_000, sched_window_ns=100)
+    rank1_path = root / "rank1" / "d0" / "chip_swimlane_records.json"
+    rank1 = json.loads(rank1_path.read_text())
+    device_base = 100 + 100_000
+    rank1["aicpu_scheduler_phases"] = [
+        [{"kind": "dispatch", "start_cycles": device_base + 800, "end_cycles": device_base + 850}]
+    ]
+    rank1_path.write_text(json.dumps(rank1))
+    args = sc._build_parser().parse_args([str(root), "--dispatch", "d0"])
+
+    with pytest.raises(ValueError, match="pair ambiguously"):
+        sc._generate_l3_trace(args, root)
+
+    pinned = sc._build_parser().parse_args(
+        [str(root), "--dispatch", "d0", "--rank-pid", "0=1000", "--rank-pid", "1=1001"]
+    )
+    _, rank_metadata = sc._generate_l3_trace(pinned, root)
+    assert [item["host_pairing"]["pid"] for item in rank_metadata] == [1_000, 1_001]
+    assert [item["host_pairing"]["source"] for item in rank_metadata] == ["pinned", "pinned"]
 
 
 @pytest.mark.parametrize(
@@ -490,7 +674,7 @@ def test_load_func_names_auto_discovery_and_explicit_precedence(tmp_path):
     assert func_names == {"0": "explicit"}
 
 
-def test_host_orchestrator_phases_without_anchors_are_marked_unaligned(tmp_path):
+def test_host_orchestrator_phases_without_a_containing_window_stay_composite(tmp_path):
     raw = tmp_path / "chip_swimlane_records.json"
     raw.write_text(
         json.dumps(
@@ -537,14 +721,6 @@ def test_host_orchestrator_phases_without_anchors_are_marked_unaligned(tmp_path)
         "layout": "causal_composite",
         "trace_status": "complete",
         "relation": "host_orchestration_precedes_device",
-        "clock_alignment": {
-            "status": "unaligned",
-            "method": "nominal_frequency_offset_interp_v1",
-            "anchor_uncertainty_ns": None,
-            "host_timestamp_quantization_ns": 0,
-            "max_uncertainty_ns": None,
-            "reason": "missing_clock_anchors",
-        },
         "host_capture": {
             "status": "complete",
             "expected_records": 1,
@@ -571,7 +747,7 @@ def test_host_orchestrator_phases_without_anchors_are_marked_unaligned(tmp_path)
         core_to_thread=data["core_to_thread"],
     )
     trace = json.loads(trace_path.read_text())
-    assert trace["metadata"]["clock_alignment"]["status"] == "unaligned"
+    assert trace["metadata"]["layout"] == "causal_composite"
     assert any(
         event.get("ph") == "M"
         and event.get("name") == "process_name"
@@ -583,61 +759,47 @@ def test_host_orchestrator_phases_without_anchors_are_marked_unaligned(tmp_path)
     )
 
 
-def test_aicpu_orchestrator_uses_host_timeline_when_clock_anchors_exist(tmp_path):
-    raw = tmp_path / "chip_swimlane_records.json"
-    raw.write_text(
-        json.dumps(
-            {
-                "chip_swimlane_level": 4,
-                "metadata": {
-                    "clock_freq_hz": 1_000_000_000,
-                    "num_cores": 1,
-                    "core_types": ["aiv"],
-                    "core_to_thread": [0],
-                    "host_clock_domain_id": "same-boot",
-                    "host_timeline_origin_ns": 1_000,
-                    "clock_anchors": {
-                        "device_timestamp_unit": "syscnt_cycles",
-                        "samples": [
-                            {
-                                "position": "pre_host_orchestration",
-                                "sample_idx": 0,
-                                "host_before_ns": 990,
-                                "device_cycles": 100,
-                                "host_after_ns": 1_010,
-                                "error": None,
-                            },
-                            {
-                                "position": "post_device_execution",
-                                "sample_idx": 0,
-                                "host_before_ns": 5_080,
-                                "device_cycles": 4_100,
-                                "host_after_ns": 5_120,
-                                "error": None,
-                            },
-                        ],
-                    },
-                },
-                "aicore_tasks": [[0, 7, 1, 2_100, 2_200, 0]],
-                "aicpu_tasks": [[0, 1, 2_000, 2_300]],
-                "aicpu_scheduler_phases": [
-                    [{"kind": "dispatch", "start_cycles": 1_900, "end_cycles": 1_950, "tasks_processed": 1}]
-                ],
-                "aicpu_orchestrator_phases": [
-                    [{"submit_idx": 0, "task_id": 7, "start_cycles": 1_800, "end_cycles": 1_850}]
-                ],
-            }
-        )
-    )
+def test_single_capture_uses_host_timeline_when_a_containing_window_is_given(tmp_path):
+    """One capture placed inside the window the Host log says contained it.
 
-    data = sc.read_perf_data(raw)
+    The `sched` window joins the two artifacts onto one device-phase timeline,
+    and the window's spare width becomes the placement's published slack.
+    """
+    document = {
+        "chip_swimlane_level": 4,
+        "metadata": {
+            "clock_freq_hz": 1_000_000_000,
+            "num_cores": 1,
+            "core_types": ["aiv"],
+            "core_to_thread": [0],
+            "host_clock_domain_id": "same-boot",
+            "host_timeline_origin_ns": 1_000,
+        },
+        "aicore_tasks": [[0, 7, 1, 2_100, 2_200, 0]],
+        "aicpu_tasks": [[0, 1, 2_000, 2_300]],
+        "aicpu_scheduler_phases": [
+            [{"kind": "dispatch", "start_cycles": 1_900, "end_cycles": 1_950, "tasks_processed": 1}]
+        ],
+        "aicpu_orchestrator_phases": [[{"submit_idx": 0, "task_id": 7, "start_cycles": 1_800, "end_cycles": 1_850}]],
+    }
+    raw = tmp_path / "chip_swimlane_records.json"
+    raw.write_text(json.dumps(document))
+    placement = _containment_placement(document)
+
+    data = sc.read_perf_data(raw, placement=placement)
 
     assert data["orchestrator_source"] == "aicpu"
-    assert data["tasks"][0]["start_time_us"] == 2.05
-    assert data["timeline_metadata"]["layout"] == "clock_aligned"
-    assert data["timeline_metadata"]["clock_alignment"]["status"] == "calibrated"
+    # Device cycle 2100 sits 925 ns into the run wall, which is drawn from the
+    # window's start at Host ns 1000; the origin is this capture's own 1000.
+    assert data["tasks"][0]["start_time_us"] == 0.925
+    assert data["timeline_metadata"]["layout"] == "containment_spliced"
     assert data["timeline_metadata"]["host_clock_domain_id"] == "same-boot"
     assert data["timeline_metadata"]["source_timeline_origin_ns"] == 1_000
+    assert data["timeline_metadata"]["placement"]["slack_ns"] == 3_000
+    assert data["timeline_metadata"]["placement"]["join"]["sources"] == ["sched", "device_wall"]
+    # The `sched` window is 50 ns wider than the records inside it, which is
+    # exactly how well the two artifacts can be joined.
+    assert data["timeline_metadata"]["placement"]["join"]["residual_ns"] == 50
 
 
 def test_aicore_scheduler_records_keep_common_shape_and_stream_metadata(tmp_path):
@@ -1088,99 +1250,56 @@ def test_host_capture_is_complete_when_the_pool_holds_more_than_the_submit_proje
     assert "converter_validation_errors" not in data["timeline_metadata"]["host_capture"]
 
 
-def test_host_and_device_timestamps_use_calibrated_clock_alignment(tmp_path):
+def test_host_and_device_timestamps_share_one_axis_through_containment(tmp_path):
+    """A host-orchestrating runtime's two clocks, joined without calibration.
+
+    Host orchestration records are Host ns already; the device records reach the
+    same axis through the window that contained them. The seam is bounded rather
+    than closed, so the layout publishes `slack_ns` instead of claiming a fit.
+    """
+    document = {
+        "chip_swimlane_level": 4,
+        "metadata": {
+            "clock_freq_hz": 1_000_000_000,
+            "num_cores": 1,
+            "core_types": ["aiv"],
+            "core_to_thread": [0],
+            "orchestrator_source": "host",
+            "orchestrator_clock_domain": "host_monotonic_ns",
+            "host_orchestration_origin_ns": 1_500,
+            "timeline_relation": "host_orchestration_precedes_device",
+            "host_capture": {
+                "status": "complete",
+                "expected_records": 1,
+                "recorded_records": 1,
+                "dropped_records": 0,
+                "error": None,
+            },
+        },
+        "aicore_tasks": [[0, 7, 1, 2_100, 2_200, 0]],
+        "aicpu_tasks": [[0, 1, 2_000, 2_300]],
+        "aicpu_scheduler_phases": [
+            [{"kind": "dispatch", "start_cycles": 1_900, "end_cycles": 1_950, "tasks_processed": 1}]
+        ],
+        "host_orchestrator_phases": [[{"submit_idx": 0, "task_id": 7, "start_host_ns": 1_500, "end_host_ns": 1_800}]],
+    }
     raw = tmp_path / "chip_swimlane_records.json"
-    raw.write_text(
-        json.dumps(
-            {
-                "chip_swimlane_level": 4,
-                "metadata": {
-                    "clock_freq_hz": 1_000_000_000,
-                    "num_cores": 1,
-                    "core_types": ["aiv"],
-                    "core_to_thread": [0],
-                    "orchestrator_source": "host",
-                    "orchestrator_clock_domain": "host_monotonic_ns",
-                    "host_orchestration_origin_ns": 1_500,
-                    "timeline_relation": "host_orchestration_precedes_device",
-                    "host_capture": {
-                        "status": "complete",
-                        "expected_records": 1,
-                        "recorded_records": 1,
-                        "dropped_records": 0,
-                        "error": None,
-                    },
-                    "clock_anchors": {
-                        "device_timestamp_unit": "syscnt_cycles",
-                        "samples": [
-                            {
-                                "position": "pre_host_orchestration",
-                                "sample_idx": 0,
-                                "host_before_ns": 990,
-                                "device_cycles": 100,
-                                "host_after_ns": 1_010,
-                                "error": None,
-                            },
-                            {
-                                "position": "post_device_execution",
-                                "sample_idx": 0,
-                                "host_before_ns": 5_080,
-                                "device_cycles": 4_100,
-                                "host_after_ns": 5_120,
-                                "error": None,
-                            },
-                        ],
-                    },
-                },
-                "aicore_tasks": [[0, 7, 1, 2_100, 2_200, 0]],
-                "aicpu_tasks": [[0, 1, 2_000, 2_300]],
-                "aicpu_scheduler_phases": [
-                    [{"kind": "dispatch", "start_cycles": 1_900, "end_cycles": 1_950, "tasks_processed": 1}]
-                ],
-                "host_orchestrator_phases": [
-                    [{"submit_idx": 0, "task_id": 7, "start_host_ns": 1_500, "end_host_ns": 1_800}]
-                ],
-            }
-        )
-    )
+    raw.write_text(json.dumps(document))
+    placement = _containment_placement(document)
 
-    data = sc.read_perf_data(raw)
+    data = sc.read_perf_data(raw, placement=placement)
 
+    # Host orchestration is on its own clock and keeps its exact offsets; the
+    # device records land just after it, where the window allows them earliest.
     assert data["aicpu_orchestrator_phases"][0][0]["start_time_us"] == 0.0
     assert data["aicpu_orchestrator_phases"][0][0]["end_time_us"] == 0.3
-    assert data["tasks"][0]["dispatch_time_us"] == 1.447
-    assert data["tasks"][0]["start_time_us"] == 1.55
-    assert data["timeline_metadata"] == {
-        "layout": "clock_aligned",
-        "trace_status": "complete",
-        "relation": "host_orchestration_precedes_device",
-        "clock_alignment": {
-            "status": "calibrated",
-            "method": "nominal_frequency_offset_interp_v1",
-            "anchor_uncertainty_ns": 20,
-            "host_timestamp_quantization_ns": 0,
-            "max_uncertainty_ns": 20,
-            "selected_sample_idx": {
-                "pre_host_orchestration": 0,
-                "post_device_execution": 0,
-            },
-            "anchor_group_duration_ns": {
-                "pre_host_orchestration": 20,
-                "post_device_execution": 40,
-            },
-        },
-        "host_capture": {
-            "status": "complete",
-            "expected_records": 1,
-            "recorded_records": 1,
-            "dropped_records": 0,
-            "error": None,
-        },
-        "host_records_complete": True,
-        "cross_domain_latency_available": True,
-        "source_timeline_origin_ns": 1_500,
-        "timeline_origin_ns": 1_500,
-    }
+    assert data["tasks"][0]["dispatch_time_us"] == 0.325
+    assert data["tasks"][0]["start_time_us"] == 0.425
+    assert data["timeline_metadata"]["layout"] == "containment_spliced"
+    assert data["timeline_metadata"]["cross_domain_latency_available"] is True
+    assert data["timeline_metadata"]["placement"]["slack_ns"] == 3_000
+    assert data["timeline_metadata"]["source_timeline_origin_ns"] == 1_500
+    assert data["timeline_metadata"]["timeline_origin_ns"] == 1_500
 
 
 def test_dropped_host_capture_is_visible_and_disables_cross_domain_flows(tmp_path):
@@ -1216,27 +1335,6 @@ def test_dropped_host_capture_is_visible_and_disables_cross_domain_flows(tmp_pat
                             "dropped_records": dropped_records,
                             "error": capture_error,
                         },
-                        "clock_anchors": {
-                            "device_timestamp_unit": "syscnt_cycles",
-                            "samples": [
-                                {
-                                    "position": "pre_host_orchestration",
-                                    "sample_idx": 0,
-                                    "host_before_ns": 990,
-                                    "device_cycles": 100,
-                                    "host_after_ns": 1_010,
-                                    "error": None,
-                                },
-                                {
-                                    "position": "post_device_execution",
-                                    "sample_idx": 0,
-                                    "host_before_ns": 5_080,
-                                    "device_cycles": 4_100,
-                                    "host_after_ns": 5_120,
-                                    "error": None,
-                                },
-                            ],
-                        },
                     },
                     "aicore_tasks": [[0, 7, 1, 2_100, 2_200, 0]],
                     "aicpu_tasks": [[0, 1, 2_000, 2_300]],
@@ -1246,11 +1344,10 @@ def test_dropped_host_capture_is_visible_and_disables_cross_domain_flows(tmp_pat
             )
         )
 
-        data = sc.read_perf_data(raw)
+        data = sc.read_perf_data(raw, placement=_containment_placement(json.loads(raw.read_text())))
 
-        assert data["timeline_metadata"]["layout"] == "clock_aligned"
+        assert data["timeline_metadata"]["layout"] == "containment_spliced"
         assert data["timeline_metadata"]["trace_status"] == "partial"
-        assert data["timeline_metadata"]["clock_alignment"]["status"] == "calibrated"
         assert data["timeline_metadata"]["host_capture"]["status"] == capture_status
         assert data["timeline_metadata"]["host_records_complete"] is False
         assert data["timeline_metadata"]["cross_domain_latency_available"] is False
@@ -1842,3 +1939,259 @@ def test_predicated_skip_without_deps_is_not_rendered_as_alloc(tmp_path):
         "predicated_pass": False,
     }
     assert not any(event.get("name") == "alloc(r1t2)" for event in events)
+
+
+def _append_l3_invocations(root, rank, *, host_shift_ns, count, captured_index, sched_window_ns):
+    """Rewrite one Rank's Host log as a process that ran `count` times.
+
+    A Host log covers the whole run, not the one invocation a capture holds, so
+    this is the ordinary shape rather than an edge case. Every invocation gets
+    the same window and the same `sched` phase — a repeated call of one
+    callable — and is told apart only by the dispatch its root `chip.run` span
+    names, which `next_dispatch_id_` increments once per worker per dispatch.
+
+    ``captured_index`` keeps its invocation on the window `_write_l3_rank` gave
+    the capture, so the decoys sit a millisecond either side of it.
+    """
+    pid = 1000 + rank
+    lines = []
+    for index in range(count):
+        inv = index + 1
+        start_ns = host_shift_ns + 1_000 + (index - captured_index) * 1_000_000
+        prefix = f"[mono_ns={start_ns}][T0x1][TIMING] emit_host_span: "
+        head = f"[STRACE] v=1 pid={pid} tid={pid} inv={inv} hid=abc"
+        lines += [
+            f"{prefix}{head} depth=0 name=chip.run ts={start_ns - 500} dur=9000 "
+            f"run_id=17 dispatch_id={inv} slot_id=0 generation=1 run_epoch={inv}",
+            f"{prefix}{head} depth=1 name=chip.run.runner_run ts={start_ns} dur=8000 ",
+            f"{prefix}{head} depth=2 name=chip.run.runner_run.device_wall ts=0 dur=2000 clk=dev",
+            f"{prefix}{head} depth=3 name=chip.run.runner_run.device_wall.sched ts=700 dur={sched_window_ns} clk=dev",
+        ]
+    (root / f"host.{pid}.log").write_text("\n".join(lines) + "\n")
+
+
+def _strip_dispatch_attributes(root):
+    """Make the logs look like a capture that predates the identity attributes."""
+    for log in root.glob("host.*.log"):
+        log.write_text(log.read_text().replace(" run_id=17 dispatch_id=", " no_id=17 no_dispatch="))
+
+
+def test_l3_directory_merge_picks_the_captured_invocation_out_of_a_repeated_run(tmp_path):
+    """A Host log holds every invocation; only one of them is the capture's.
+
+    The device windows are identical across a repeated call, so the fit alone
+    can neither pick one nor afford to enumerate them. The dispatch the capture
+    names narrows it to that round, and the fit then only has the two Ranks of
+    that round to tell apart.
+    """
+    root = tmp_path / "dfx_outputs"
+    for rank, task_id in ((0, 7), (1, 8)):
+        host_shift_ns = 5_000_000 + rank * 10_000
+        capture_dir = _write_l3_rank(root, rank, host_shift_ns=host_shift_ns, task_id=task_id)
+        _append_l3_invocations(
+            root,
+            rank,
+            host_shift_ns=host_shift_ns,
+            count=4,
+            captured_index=2,
+            sched_window_ns=100 + rank * 100,
+        )
+        _write_dispatch_identity(capture_dir, run_id=17, task_slot=5, group_index=rank, group_size=2)
+        # `_write_dispatch_identity` numbers this from the dN index; the capture
+        # is d0 but the run's third dispatch, which is the case that matters.
+        path = capture_dir / "dispatch_identity.json"
+        identity = json.loads(path.read_text())
+        identity["endpoint_dispatch_id"] = 3
+        path.write_text(json.dumps(identity))
+
+    args = sc._build_parser().parse_args([str(root), "--dispatch", "d0"])
+    _, rank_metadata = sc._generate_l3_trace(args, root)
+
+    assert [item["host_pairing"]["pid"] for item in rank_metadata] == [1_000, 1_001]
+    assert [item["host_pairing"]["inv"] for item in rank_metadata] == [3, 3]
+
+
+def test_l3_directory_merge_refuses_a_pairing_search_it_cannot_finish(tmp_path):
+    """Without the dispatch, the same repeated run is not scorable at all.
+
+    Enumerating whole assignments over every invocation in the log is
+    factorial in the log's length, so it has to refuse rather than grind.
+    """
+    root = tmp_path / "dfx_outputs"
+    for rank in range(4):
+        host_shift_ns = 60_000_000 + rank * 10_000
+        _write_l3_rank(root, rank, host_shift_ns=host_shift_ns, task_id=7 + rank)
+        _append_l3_invocations(
+            root,
+            rank,
+            host_shift_ns=host_shift_ns,
+            count=20,
+            captured_index=0,
+            sched_window_ns=100 + rank * 100,
+        )
+    _strip_dispatch_attributes(root)
+    args = sc._build_parser().parse_args([str(root), "--dispatch", "d0"])
+
+    with pytest.raises(ValueError, match="too many to score"):
+        sc._generate_l3_trace(args, root)
+
+
+def test_l3_rank_pid_pin_names_the_invocation_when_the_process_ran_more_than_once(tmp_path):
+    """`RANK=PID` cannot name one of four runs of that process."""
+    root = tmp_path / "dfx_outputs"
+    for rank, task_id in ((0, 7), (1, 8)):
+        host_shift_ns = 5_000_000 + rank * 10_000
+        _write_l3_rank(root, rank, host_shift_ns=host_shift_ns, task_id=task_id)
+        _append_l3_invocations(
+            root,
+            rank,
+            host_shift_ns=host_shift_ns,
+            count=4,
+            captured_index=2,
+            sched_window_ns=100 + rank * 100,
+        )
+    _strip_dispatch_attributes(root)
+
+    bare = sc._build_parser().parse_args(
+        [str(root), "--dispatch", "d0", "--rank-pid", "0=1000", "--rank-pid", "1=1001"]
+    )
+    with pytest.raises(ValueError, match=r"4 placeable invocations \(inv 1, 2, 3, 4\)"):
+        sc._generate_l3_trace(bare, root)
+
+    pinned = sc._build_parser().parse_args(
+        [str(root), "--dispatch", "d0", "--rank-pid", "0=1000:3", "--rank-pid", "1=1001:3"]
+    )
+    _, rank_metadata = sc._generate_l3_trace(pinned, root)
+
+    assert [(item["host_pairing"]["pid"], item["host_pairing"]["inv"]) for item in rank_metadata] == [
+        (1_000, 3),
+        (1_001, 3),
+    ]
+
+
+def _write_l3_scheduler_log(root, *, pid=900, spans):
+    """The L3 process's own log, which the run writes into the same case root.
+
+    `_submit_l3_locked` binds this process's log to `CallConfig.output_prefix`
+    just as each ChipWorker child does, so the scheduler's `node.*` spans sit
+    beside the Rank captures rather than anywhere the merge has to be told
+    about.
+    """
+    lines = []
+    for name, ts, dur, tid, inv in spans:
+        prefix = f"[mono_ns={ts}][T0x1][TIMING] emit_host_span: "
+        lines.append(
+            f"{prefix}[STRACE] v=1 pid={pid} tid={tid} inv={inv} hid=def depth=1 name={name} ts={ts} dur={dur} "
+            f"run_id=17 task_slot=5 worker_id=0 dispatch_id={inv}"
+        )
+    (root / f"host.{pid}.log").write_text("\n".join(lines) + "\n")
+
+
+def test_l3_directory_merge_draws_the_dispatching_process_beside_the_ranks(tmp_path):
+    """The L3 scheduler's own lanes belong in the L3 swimlane.
+
+    Its spans are Host CLOCK_MONOTONIC and same-host cross-process comparable,
+    so they go straight onto the axis — no placement, and no `slack_ns`, which
+    is a device-clock term only.
+    """
+    root = tmp_path / "dfx_outputs"
+    _write_l3_rank(root, 0, host_shift_ns=0, task_id=7)
+    _write_l3_rank(root, 1, host_shift_ns=10_000, task_id=8)
+    _write_l3_scheduler_log(
+        root,
+        spans=[
+            ("node.submit", 200, 300, 900, 1),
+            ("node.dispatch", 600, 9_000, 901, 1),
+            ("node.complete", 9_800, 400, 901, 1),
+        ],
+    )
+    args = sc._build_parser().parse_args([str(root), "--dispatch", "d0"])
+
+    output_path, _ = sc._generate_l3_trace(args, root)
+    trace = json.loads(output_path.read_text())
+
+    assert trace["metadata"]["dispatcher_pids"] == [900]
+    # The axis now starts at the scheduler's first span, which opens before any
+    # Rank's window: an origin taken from the windows alone would put it at a
+    # negative timestamp.
+    assert trace["metadata"]["global_origin_ns"] == 200
+
+    dispatcher = [event for event in trace["traceEvents"] if event.get("ph") == "X" and event["pid"] < 11]
+    assert {event["name"] for event in dispatcher} == {"node.submit", "node.dispatch", "node.complete"}
+    assert all("slack_ns" not in event["args"] for event in dispatcher)
+    assert [event["ts"] for event in dispatcher if event["name"] == "node.dispatch"] == [0.4]
+    # Perfetto orders process groups by pid, so the scheduler has to sort below
+    # every Rank's Host lane, which in turn sorts below every Chip view.
+    process_pids = sorted(
+        event["pid"] for event in trace["traceEvents"] if event.get("ph") == "M" and event.get("name") == "process_name"
+    )
+    assert process_pids[0] == 1
+    assert min(pid for pid in process_pids if pid >= sc._HOST_BLOCK_PID_BASE) == sc._HOST_BLOCK_PID_BASE
+
+
+def test_l3_directory_merge_leaves_out_the_dispatches_it_is_not_merging(tmp_path):
+    """The scheduler's log covers the run; the merge covers one dispatch.
+
+    Grouping is per `(pid, inv)`, which is how a multi-round L3 run separates
+    its dispatches, so the round that did not produce these captures is left
+    out whole.
+    """
+    root = tmp_path / "dfx_outputs"
+    _write_l3_rank(root, 0, host_shift_ns=0, task_id=7)
+    _write_l3_rank(root, 1, host_shift_ns=10_000, task_id=8)
+    _write_l3_scheduler_log(
+        root,
+        spans=[
+            ("node.dispatch", 600, 9_000, 901, 1),
+            ("node.dispatch", 5_000_000, 9_000, 901, 2),
+        ],
+    )
+    args = sc._build_parser().parse_args([str(root), "--dispatch", "d0"])
+
+    output_path, _ = sc._generate_l3_trace(args, root)
+    trace = json.loads(output_path.read_text())
+
+    dispatcher = [event for event in trace["traceEvents"] if event.get("ph") == "X" and event["pid"] < 11]
+    assert [event["args"]["os_pid"] for event in dispatcher] == [900]
+    assert [event["ts"] for event in dispatcher] == [0.0]
+
+
+def test_l3_directory_merge_draws_the_scheduler_loops_that_carry_no_invocation(tmp_path):
+    """`node.scheduler_loop` belongs to a thread, not to a run.
+
+    It is emitted with `inv=0`, so every loop of the whole run shares one
+    pseudo-invocation and the invocation cannot be the selection unit: taking
+    them as a group draws all of them or none. They are selected span by span
+    instead, against the story the dispatch spans already staked out — which
+    reaches past the Ranks' own windows at both ends, since a loop both
+    precedes the first dispatch and follows the last completion.
+    """
+    root = tmp_path / "dfx_outputs"
+    _write_l3_rank(root, 0, host_shift_ns=0, task_id=7)
+    _write_l3_rank(root, 1, host_shift_ns=10_000, task_id=8)
+    _write_l3_scheduler_log(
+        root,
+        spans=[
+            # `graph_build` closes before the Ranks open and is kept only
+            # because its invocation is: the invocation is the unit here.
+            ("node.graph_build", 200, 400, 900, 1),
+            ("node.dispatch", 700, 9_000, 901, 1),
+            # Bracketing loops: one before the Ranks open, one after they close.
+            ("node.scheduler_loop", 300, 100, 901, 0),
+            ("node.scheduler_loop", 9_600, 200, 901, 0),
+            # A loop from a later dispatch, outside the story entirely.
+            ("node.scheduler_loop", 5_000_000, 200, 901, 0),
+        ],
+    )
+    args = sc._build_parser().parse_args([str(root), "--dispatch", "d0"])
+
+    output_path, _ = sc._generate_l3_trace(args, root)
+    trace = json.loads(output_path.read_text())
+
+    loops = [
+        event for event in trace["traceEvents"] if event.get("ph") == "X" and event["name"] == "node.scheduler_loop"
+    ]
+    assert sorted(event["ts"] for event in loops) == [0.1, 9.4]
+    assert "node.graph_build" in {
+        event["name"] for event in trace["traceEvents"] if event.get("ph") == "X" and event["pid"] == 1
+    }

@@ -167,12 +167,44 @@ python -m simpler_setup.tools.swimlane_converter build_output/<case>/dfx_outputs
     --dispatch-id 17:5 -o build_output/<case>/dfx_outputs/l3_swimlane.json
 ```
 
-Directory mode requires level-4 captures with successful Host/Device clock
-anchors and the same non-empty `metadata.host_clock_domain_id`. New captures
-derive that ID from the Linux boot ID; older captures remain supported in
-single-file mode. Every Rank loads its own sibling `deps.json` and unique
-`name_map*.json`, so the single-file override options are intentionally rejected
-in directory mode.
+Directory mode puts the Ranks on one axis by containment, not by calibration:
+each Rank's device work is placed inside the `chip.run.runner_run` window that
+held it, read from the run's `host.<pid>.log`. It therefore needs those logs
+(`--host-log` overrides the default of every `host.*.log` beside the captures)
+and works at any capture level. Every drawn slice carries the `slack_ns` its Rank was placed under, each
+Rank's metadata carries the full `placement` record, and the top level carries
+`cross_rank_uncertainty_ns` — the sum of the two widest, which bounds any
+interval read between two Ranks. See
+[`containment.py`](containment.py) for the mechanism.
+
+The merged trace also carries the processes that dispatched to the Ranks —
+the L3 scheduler's `node.*` lanes, and an L4's `network1.*` above them, listed
+in `metadata.dispatcher_pids`. Those are Host `CLOCK_MONOTONIC` and same-host
+cross-process comparable, so they are drawn directly and carry no `slack_ns`:
+containment is only needed where a device clock is. Only the invocations
+overlapping the Ranks' own span on the axis are drawn, since one log covers the
+whole run.
+
+Ranks must report the same `metadata.host_clock_domain_id`, since two Hosts'
+windows are not on one axis; a capture from before that field existed is placed
+with a warning.
+
+**Which invocation, then which Rank.** A Host log holds every invocation of the
+run, while a capture holds one, so the pairing is two questions. The first is
+answered exactly: the capture's `dispatch_identity.json` and the Host log's root
+`chip.run` span name the same dispatch — `run_id`, `dispatch_id`/`endpoint_dispatch_id`,
+`slot_id`/`pipeline_slot`, `generation`/`pipeline_generation` — which narrows a
+long log to the one round the capture came from. `dispatch_id` counts per
+worker, so the members of one group round share it, and the second question —
+which Rank of that round — is answered by the device windows each capture fills.
+Two Ranks running the same shape fill them equally, and there the converter says
+so instead of guessing and takes `--rank-pid RANK=PID`, or `RANK=PID:INV` when
+that process ran more than once. A capture with no sidecar falls back to the
+window fit for both questions, and refuses outright when the log holds more
+invocations than that search can score.
+
+Every Rank loads its own sibling `deps.json` and unique `name_map*.json`, so the
+single-file override options are intentionally rejected in directory mode.
 
 L3 SceneTest runs create `rank<chip-worker>/d<local-capture>/` automatically and
 invoke this directory mode after the case. Each new capture also contains
@@ -227,6 +259,8 @@ SPMD tasks are present.
 | `--output` | `-o` | Output JSON file (default: `merged_swimlane.json` beside a file input, `l3_swimlane.json` inside a directory input) |
 | `--dispatch` | | Directory mode only: local capture directory to merge across Ranks, e.g. `d0`. Mutually exclusive with `--dispatch-id` |
 | `--dispatch-id` | | Directory mode only: parent dispatch identity to merge, formatted `RUN_ID:TASK_SLOT`. Resolves each Rank's own `dN` through `dispatch_identity.json`. Mutually exclusive with `--dispatch` |
+| `--host-log` | | Directory mode: Host `[STRACE]` log holding the `chip.run.runner_run` windows the captures are placed in (repeatable). Defaults to every `host.*.log` in the input directory |
+| `--rank-pid` | | Directory mode: pin one Rank's capture to the Host invocation that ran it, `RANK=PID` or `RANK=PID:INV` (repeatable). Only needed when the captures carry no `dispatch_identity.json` and Ranks running the same shape cannot be told apart by their device windows |
 | `--kernel-config` | `-k` | Path to kernel_config.py, used for function name mapping. Rejected in directory mode |
 | `--func-names` | | Path to name_map*.json (SceneTest format) for function name mapping. Rejected in directory mode |
 | `--deps-json` | | Path to a dep_gen `deps.json` (defaults to sibling of input). Without one, no dependency arrows are drawn. Rejected in directory mode |
