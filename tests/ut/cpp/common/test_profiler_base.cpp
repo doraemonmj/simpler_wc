@@ -270,6 +270,34 @@ TEST(ProfilerBaseTest, QuiesceWakesSilentCollector) {
     collector.stop();
 }
 
+// notify_ready_waiters() walks shards 0..shard_count_. At one shard that loop is
+// indistinguishable from one that only ever notifies shard 0, so the two tests
+// above hold no bound on it. Here every live shard carries a collector that
+// never saw a buffer: any shard the notify misses falls back to the 100 ms tick
+// and blows the bound, whichever control path published the state.
+TEST(ProfilerBaseTest, LifecycleControlWakesEverySilentCollectorShard) {
+    using namespace std::chrono_literals;
+    constexpr int kThreads = PLATFORM_MAX_AICPU_THREADS;
+
+    TestHeader header{};
+    TestCollector<PerThreadModule> collector;
+    collector.init(kThreads, &header);
+    ASSERT_EQ(collector.manager().shard_count(), kThreads);
+    collector.start(nullptr);
+    std::this_thread::sleep_for(10ms);
+
+    const auto quiesce_start = std::chrono::steady_clock::now();
+    collector.quiesce();
+    const auto quiesce_elapsed = std::chrono::steady_clock::now() - quiesce_start;
+
+    const auto stop_start = std::chrono::steady_clock::now();
+    collector.stop();
+    const auto stop_elapsed = std::chrono::steady_clock::now() - stop_start;
+
+    EXPECT_LT(quiesce_elapsed, 50ms);
+    EXPECT_LT(stop_elapsed, 50ms);
+}
+
 // A subsystem that emits nothing for a whole run is a valid shape: stop() must
 // bring the collector down via execution_complete_, NOT via the idle-timeout
 // hang detector. The guard that used to skip arming the timeout only applied
