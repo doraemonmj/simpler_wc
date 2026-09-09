@@ -238,10 +238,9 @@ class Placement:
 def _host_identity(span):
     """The dispatch a root ``chip.run`` span names, or ``None`` if it names none.
 
-    Parsed here rather than borrowed from ``strace_timing``, which imports this
-    module. The four fields are written as one ``snprintf`` and are therefore
-    all present or all absent; a partial set means the log is not what it claims
-    and is treated as no identity rather than as a half key.
+    The four fields are written as one ``snprintf`` and are therefore all
+    present or all absent; a partial set means the log is not what it claims and
+    is treated as no identity rather than as a half key.
     """
     if span is None:
         return None
@@ -440,9 +439,11 @@ def join_origin(host, capture):
 def place(host, capture=None, join=None):
     """Bound a run's device timeline inside its Host window.
 
-    Without a ``capture`` this places the Host log's own ``clk=dev`` spans, which
-    is all a host swimlane has; with one it also places that capture's records,
-    joined onto the same device-phase timeline.
+    With a ``capture``, that capture's records are joined onto the same
+    device-phase timeline and placed alongside the ``device_wall`` sub-phases
+    the Host log carries. The cross-Rank merge is the only caller and always
+    passes one; the capture-less form bounds the Host log's own ``clk=dev``
+    spans and is exercised by the unit tests alone.
     """
     if capture is not None and join is None:
         join = join_origin(host, capture)
