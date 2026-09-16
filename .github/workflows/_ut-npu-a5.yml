@@ -44,10 +44,11 @@ jobs:
           packages: "--no-build-isolation --config-settings=build.targets=build_package_a5 .[test]"
           install-torch: "false"
           system-site-packages: "true"
-          source-cann: "false"
+          source-cann: "true"
 
       - name: Run Python hardware unit tests (a5)
         run: |
+          source /usr/local/Ascend/cann/set_env.sh
           source .venv/bin/activate
           task-submit --timeout 1800 --max-time 1800 --device auto --device-num "$DEVICE_NUM" \
             --run "python -m pytest tests/ut -m requires_hardware --platform a5 --device \$TASK_DEVICE -v"
@@ -55,6 +56,7 @@ jobs:
       - name: Build cann-examples/query
         if: inputs.include_cann_examples
         run: |
+          source /usr/local/Ascend/cann/set_env.sh
           cd tools/cann-examples/query
           cmake -B build .
           cmake --build build
@@ -63,6 +65,7 @@ jobs:
       - name: Build cann-examples/aicpu-device-query
         if: inputs.include_cann_examples
         run: |
+          source /usr/local/Ascend/cann/set_env.sh
           export CROSS=${ASCEND_HOME_PATH}/tools/hcc/bin/aarch64-target-linux-gnu
           cd tools/cann-examples/aicpu-device-query/device
           cmake -B build . -DCMAKE_C_COMPILER=${CROSS}-gcc -DCMAKE_CXX_COMPILER=${CROSS}-g++
@@ -74,6 +77,7 @@ jobs:
       - name: Build cann-examples/aicpu-kernel-launch
         if: inputs.include_cann_examples
         run: |
+          source /usr/local/Ascend/cann/set_env.sh
           export CROSS=${ASCEND_HOME_PATH}/tools/hcc/bin/aarch64-target-linux-gnu
           cd tools/cann-examples/aicpu-kernel-launch/device
           cmake -B build . -DCMAKE_C_COMPILER=${CROSS}-gcc -DCMAKE_CXX_COMPILER=${CROSS}-g++
