@@ -586,6 +586,7 @@ class TestMailboxConfigRoundtrip:
         from simpler.worker import (  # noqa: PLC0415  # pyright: ignore[reportAttributeAccessIssue]
             _CFG_FMT,
             _OFF_CONFIG,
+            Worker,
             _read_config_from_mailbox,
         )
 
@@ -634,6 +635,27 @@ class TestMailboxConfigRoundtrip:
         ranked = _read_config_from_mailbox(memoryview(buf), chip_rank=2, capture_index=7)
         assert ranked.output_prefix == "/tmp/out/rank2/d7"
         assert ranked.capture_clock_anchors is True
+
+        level_worker = Worker(level=3, num_sub_workers=0)
+        level_worker._topology_worker_id = 5
+        nested = _read_config_from_mailbox(
+            memoryview(buf),
+            chip_rank=2,
+            capture_index=7,
+            level_worker=level_worker,
+        )
+        assert nested.output_prefix == "/tmp/out/node5/rank2/d7"
+
+    def test_level_directory_needs_both_a_prefix_and_parent_identity(self):
+        from simpler.worker import Worker, _level_capture_prefix  # noqa: PLC0415
+
+        unattached = Worker(level=3, num_sub_workers=0)
+        attached = Worker(level=3, num_sub_workers=0)
+        attached._topology_worker_id = 4
+
+        assert _level_capture_prefix("/tmp/out", unattached) == "/tmp/out"
+        assert _level_capture_prefix("", attached) == ""
+        assert _level_capture_prefix("/tmp/out", attached) == "/tmp/out/node4"
 
     def test_rank_directory_covers_every_diagnostic_but_anchors_stay_swimlane_only(self):
         # rankN/dN separates one ChipWorker child's artifacts from its siblings',

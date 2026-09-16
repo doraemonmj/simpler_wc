@@ -1996,10 +1996,11 @@ class TestTerminalStateContract:
     def test_add_worker_freezes_child_before_topology_publication(self):
         parent = Worker(level=4, num_sub_workers=0)
         child = Worker(level=3, num_sub_workers=0)
-        parent.add_worker(child)
+        worker_id = parent.add_worker(child)
 
         with child._hierarchical_start_cv:
             assert child._topology_parent is parent
+            assert child._topology_worker_id == worker_id == 0
         with pytest.raises(RuntimeError, match="attached as a child"):
             child.init()
 

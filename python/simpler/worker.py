@@ -3501,11 +3501,27 @@ def _chip_process_loop(  # noqa: PLR0913 -- fork-child entry: all context (bins,
         cw.finalize()
 
 
+def _level_capture_prefix(prefix: str, worker: Worker) -> str:
+    """The diagnostics prefix one level hands to the level below it.
+
+    A Worker its parent attached owns a namespace under that parent's, named by
+    the role it plays and the id the parent gave it. Without one, two Workers at
+    the same level write over each other: each numbers its own chips from zero,
+    so both claim `rank0/d0`, and on two machines neither even sees the
+    collision. A Worker with no parent is the top of its own tree and keeps the
+    prefix it was handed, which leaves a single-tree layout as it was.
+    """
+    if not prefix or worker._topology_worker_id is None:
+        return prefix
+    return os.path.join(prefix, f"{_span_prefix(worker.level)}{worker._topology_worker_id}")
+
+
 def _read_config_from_mailbox(
     buf: memoryview,
     *,
     chip_rank: int | None = None,
     capture_index: int | None = None,
+    level_worker: Worker | None = None,
 ) -> CallConfig:
     """Reconstruct a CallConfig from the unified mailbox layout."""
     (
@@ -3534,9 +3550,12 @@ def _read_config_from_mailbox(
     cfg.runtime_env.ring_dep_pool = ring_dep_pool
     # NUL-terminated C string in a 1024-byte field.
     cfg.output_prefix = prefix_bytes.split(b"\x00", 1)[0].decode("utf-8")
-    # Keep per-process host logs at the case root. Profiling artifacts are
-    # routed below, after the log directory has been configured, so changing
-    # capture directories does not add log-directory churn to every dispatch.
+    # Applied before the log directory is bound, so this Worker's own records
+    # land in the namespace it owns rather than in its parent's.
+    if level_worker is not None:
+        cfg.output_prefix = _level_capture_prefix(cfg.output_prefix, level_worker)
+    # An attached Worker's Host logs always live in its level namespace;
+    # rankN/dN below remains gated on per-rank diagnostics.
     if cfg.output_prefix:
         _native_set_host_log_directory(cfg.output_prefix)
     if cfg.output_prefix and chip_rank is not None and capture_index is not None and _config_diagnostics_any(cfg):
@@ -3663,7 +3682,7 @@ def _child_worker_loop(
             # handle H' (per-backing, no map) so the inner orch sees only its own handles;
             # pure forwarding to L2 carries no map cost.
             args = _reexport_args_from_mailbox(task_buf, inner_worker)
-            cfg = _read_config_from_mailbox(task_buf)
+            cfg = _read_config_from_mailbox(task_buf, level_worker=inner_worker)
             inner_worker.run(orch_fn, args, cfg)
         except Exception as e:  # noqa: BLE001
             return 1, _format_exc(f"child_worker level={inner_worker.level}", e)
@@ -4806,6 +4825,11 @@ class Worker:
         # L4+ next-level Worker children (added via add_worker before init)
         self._next_level_workers: list[Worker] = []
         self._topology_parent: Worker | None = None
+        # The id a parent gave this Worker, which is also the namespace its
+        # diagnostics go under. Held here and not only in the parent's list
+        # because the process that writes them is the forked child, which
+        # reaches the parent's bookkeeping no more easily than any other.
+        self._topology_worker_id: int | None = None
         self._next_level_worker_ids: list[int] = []
         self._next_level_shms: list[SharedMemory] = []
         self._next_level_pids: list[int] = []
@@ -7632,6 +7656,7 @@ class Worker:
                 raise RuntimeError("Child worker is already attached to another parent")
             worker_id = self._allocate_next_level_worker_id()
             worker._topology_parent = self
+            worker._topology_worker_id = worker_id
             self._next_level_workers.append(worker)
             self._next_level_worker_ids.append(worker_id)
             return worker_id
