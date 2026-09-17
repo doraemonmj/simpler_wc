@@ -3767,10 +3767,13 @@ def _dispatcher_spans(spans, chip_pids, window_ns):
 def _dispatcher_block_events(spans, global_origin_ns):
     """The processes that dispatched to these Ranks, drawn above them.
 
-    An L3 run writes one `host.<pid>.log` per process into the same case root,
-    so the scheduler's own `node.*` spans — and an L4's `network1.*` above them
-    — are already beside the Rank captures. They are Host CLOCK_MONOTONIC and
-    same-host cross-process comparable, so they go straight onto the axis: no
+    Each process writes its `host.<pid>.log` into the root of the level
+    namespace it owns, so a direct L3 run leaves the scheduler's own `node.*`
+    spans — and an L4's `network1.*` above them — beside the Rank captures.
+    Under a parent-assigned `nodeN` namespace the levels above it write one
+    directory up, outside the root this merge reads, so only that namespace's
+    own levels reach here. They are Host CLOCK_MONOTONIC and same-host
+    cross-process comparable, so they go straight onto the axis: no
     containment, no slack. Containment is only ever needed for the device
     clock, which is why nothing in this block carries a bound.
     """

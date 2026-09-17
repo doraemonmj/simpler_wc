@@ -216,10 +216,12 @@ parent-assigned node namespace:
         └── ...
 ```
 
-`nodeN` uses the stable worker id returned by `Worker.add_worker()` or
-`Worker.add_remote_worker()`. Local and remote L3 Workers follow the same
-layout, so separately collected node subtrees can be placed below one run root
-without both claiming `rank0/d0`. A Worker that has no parent is the root of its
+`nodeN` uses the stable worker id returned by `Worker.add_worker()`,
+`Worker.add_remote_worker()`, or `Worker.add_mpirun_worker_group()`; one
+counter serves all three, so a local child and a remote one never share a
+number. Local, TCP-remote, and MPI-launched L3 Workers follow the same layout,
+so separately collected node subtrees can be placed below one run root without
+both claiming `rank0/d0`. A Worker that has no parent is the root of its
 capture tree and keeps the supplied prefix, preserving the direct-L3 layout
 above. At deeper levels the same rule is recursive: an attached L4 Worker owns
 a `network1N` directory before its L3 children add their `nodeN` directories.
@@ -508,13 +510,16 @@ Bound" lane in the trace.
 
 The Host block comes first and has two parts. Above the Ranks are the
 processes that dispatched to them — the L3 scheduler's `node.*` lanes, and an
-L4's `network1.*` above those. A run binds every process's host log to the same
-case root, so these are already beside the Rank captures; they are Host
-CLOCK_MONOTONIC and same-host cross-process comparable, so they are drawn
-directly and **carry no `slack_ns` at all** — containment is a device-clock
-term. Their logs cover the whole run while the merge covers one dispatch, so
-the invocations drawn are those overlapping the Ranks' own span on the axis,
-and `metadata.dispatcher_pids` names the processes they came from.
+L4's `network1.*` above those. Each process binds its host log to the root of
+the level namespace it owns, so a direct L3 run leaves all of them beside the
+Rank captures. Under a parent-assigned namespace only that namespace's own
+levels are beside them — the L4 above a `nodeN` writes one directory up, where
+a merge reading that `nodeN` does not look. They are Host CLOCK_MONOTONIC and
+same-host cross-process comparable, so they are drawn directly and **carry no
+`slack_ns` at all** — containment is a device-clock term. Their logs cover the
+whole run while the merge covers one dispatch, so the invocations drawn are
+those overlapping the Ranks' own span on the axis, and
+`metadata.dispatcher_pids` names the processes they came from.
 
 Then each Rank contributes three lanes read off its own Host log — its
 `chip.run` call tree (on the Host clock, no placement error), the `clk=dev`
