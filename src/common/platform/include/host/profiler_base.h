@@ -124,11 +124,10 @@
  * Lifecycle (the only correct teardown order):
  *   1. Derived::init() — on the success path, calls set_memory_context() to
  *      stash the alloc/reg/free callbacks, shm_dev/host pointers,
- *      shm_size and device_id on the base. If init aborts before that,
+ *      shm_size and device_id on the base and bind the manager's memory
+ *      operations to that region. If init aborts before that,
  *      start(tf) becomes a no-op (shm_host_ stays nullptr).
- *   2. start(tf) — atomically: (a) assembles a MemoryOps from the stashed
- *      callbacks, (b) hands it to the manager via set_memory_context,
- *      (c) launches the mgmt thread(s), (d) launches the collector thread(s).
+ *   2. start(tf) — launches the mgmt thread(s), then the collector thread(s).
  *      Mgmt is started before collectors because mgmt is the only writer to
  *      the host ready queue shard(s) and collectors are their consumers.
  *   3. ... device execution ...
@@ -249,10 +248,10 @@ using ProfUnregisterCallback = int (*)(void *dev_ptr, int device_id);
 using ProfFreeCallback = std::function<int(void *dev_ptr)>;
 
 // `default_host_shadow_register` was previously a free function; it has been
-// folded into a lambda inside `ProfilerBase::start()` so the shadow it
-// malloc's can be registered with the manager's `malloc_shadows_` set for
+// folded into `bind_manager_memory_context()` so its malloc'd shadow can
+// be registered with the manager's `malloc_shadows_` set for
 // safe teardown via `clear_mappings()` / `release_all_owned()`. See
-// `ProfilerBase::start()` for the inline definition.
+// `ProfilerBase::bind_manager_memory_context()` for the inline definition.
 
 /**
  * RAII scope guard for collector `init()` rollback. On destruction (without
@@ -744,7 +743,7 @@ public:
      * framework picks the right register fallback (identity vs host-shadow
      * malloc) based on whether `copy_to_device` was provided.
      *
-     * `register_cb` may be nullptr — start(tf) installs the appropriate
+     * `register_cb` may be nullptr — set_memory_context() installs the appropriate
      * default for the arch path (identity on SVM platforms, host-shadow
      * malloc + memset 0 + copy_to_device on non-SVM platforms).
      */
@@ -763,6 +762,10 @@ public:
         shm_host_ = shm_host;
         shm_size_ = shm_size;
         device_id_ = device_id;
+        // begin_run() publishes fields before start(). Bind now so a rebuilt
+        // collector cannot translate new host pointers through the previous
+        // region's base. Init/rebind requires the collector threads to be stopped.
+        bind_manager_memory_context();
     }
 
     /**
@@ -779,11 +782,11 @@ public:
         shm_host_ = nullptr;
         shm_size_ = 0;
         device_id_ = -1;
+        manager_.clear_memory_context();
     }
 
     /**
-     * Assemble a MemoryOps from the callbacks stashed by set_memory_context()
-     * and launch the mgmt + collector threads. If shm_host_ is nullptr (Derived's
+     * Launch the mgmt + collector threads. If shm_host_ is nullptr (Derived's
      * init() aborted before set_memory_context, or finalize() has cleared
      * the context) this is a no-op.
      *
@@ -818,49 +821,6 @@ public:
             );
             return;
         }
-
-        MemoryOps ops;
-        ops.alloc = alloc_cb_;
-        ops.free_ = free_cb_;
-        if (register_cb_ != nullptr) {
-            ops.reg = register_cb_;
-        } else if (copy_to_device_) {
-            // Non-SVM platform: host-shadow allocate + copy zeros to device.
-            // Capture `this` so the malloc'd shadow can be registered as
-            // framework-owned via the manager.
-            auto copy_to_device = copy_to_device_;
-            ops.reg = [this,
-                       copy_to_device](void *dev_ptr, size_t size, int /*device_id*/, void **host_ptr_out) -> int {
-                if (host_ptr_out == nullptr) return PTO_RUNTIME_ERR_INTERNAL;
-                void *host_ptr = std::malloc(size);
-                if (host_ptr == nullptr) {
-                    *host_ptr_out = nullptr;
-                    return PTO_RUNTIME_ERR_INTERNAL;
-                }
-                std::memset(host_ptr, 0, size);
-                int rc = copy_to_device(dev_ptr, host_ptr, size);
-                if (rc != 0) {
-                    std::free(host_ptr);
-                    *host_ptr_out = nullptr;
-                    return rc;
-                }
-                manager_.add_malloc_shadow(host_ptr);
-                *host_ptr_out = host_ptr;
-                return 0;
-            };
-        } else {
-            // SVM platform: identity-map (host_ptr == dev_ptr).
-            ops.reg = [](void *dev_ptr, size_t /*size*/, int /*device_id*/, void **host_ptr_out) {
-                *host_ptr_out = dev_ptr;
-                return 0;
-            };
-        }
-        // copy_to_device_ / copy_from_device_ may be null (SVM path); the
-        // manager's internal null-checks short-circuit mirror_/range_/buffer_
-        // calls to no-ops in that case.
-        ops.copy_to_device = copy_to_device_;
-        ops.copy_from_device = copy_from_device_;
-        manager_.set_memory_context(std::move(ops), shm_dev_, shm_host_, shm_size_, device_id_);
 
         execution_complete_.store(false, std::memory_order_release);
         // Reset the quiescence handshake so a restarted collector cannot see a
@@ -981,6 +941,51 @@ public:
     const Manager &manager() const { return manager_; }
 
 protected:
+    void bind_manager_memory_context() {
+        MemoryOps ops;
+        ops.alloc = alloc_cb_;
+        ops.free_ = free_cb_;
+        if (register_cb_ != nullptr) {
+            ops.reg = register_cb_;
+        } else if (copy_to_device_) {
+            // Non-SVM platform: host-shadow allocate + copy zeros to device.
+            // Capture `this` so the malloc'd shadow can be registered as
+            // framework-owned via the manager.
+            auto copy_to_device = copy_to_device_;
+            ops.reg = [this,
+                       copy_to_device](void *dev_ptr, size_t size, int /*device_id*/, void **host_ptr_out) -> int {
+                if (host_ptr_out == nullptr) return PTO_RUNTIME_ERR_INTERNAL;
+                void *host_ptr = std::malloc(size);
+                if (host_ptr == nullptr) {
+                    *host_ptr_out = nullptr;
+                    return PTO_RUNTIME_ERR_INTERNAL;
+                }
+                std::memset(host_ptr, 0, size);
+                int rc = copy_to_device(dev_ptr, host_ptr, size);
+                if (rc != 0) {
+                    std::free(host_ptr);
+                    *host_ptr_out = nullptr;
+                    return rc;
+                }
+                manager_.add_malloc_shadow(host_ptr);
+                *host_ptr_out = host_ptr;
+                return 0;
+            };
+        } else {
+            // SVM platform: identity-map (host_ptr == dev_ptr).
+            ops.reg = [](void *dev_ptr, size_t /*size*/, int /*device_id*/, void **host_ptr_out) {
+                *host_ptr_out = dev_ptr;
+                return 0;
+            };
+        }
+        // copy_to_device_ / copy_from_device_ may be null (SVM path); the
+        // manager's internal null-checks short-circuit mirror_/range_/buffer_
+        // calls to no-ops in that case.
+        ops.copy_to_device = copy_to_device_;
+        ops.copy_from_device = copy_from_device_;
+        manager_.set_memory_context(std::move(ops), shm_dev_, shm_host_, shm_size_, device_id_);
+    }
+
     Manager manager_;
     std::atomic<bool> execution_complete_{false};
     std::vector<std::thread> collector_threads_;

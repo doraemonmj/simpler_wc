@@ -110,7 +110,7 @@ using ThreadFactory = std::function<std::thread(std::function<void()>)>;
  * - reg:              "register" dev_ptr for host visibility. On a5 this
  *                     allocates a paired host shadow (malloc + memset 0 +
  *                     copy_to_device of the zeros) and writes its address to
- *                     *host_ptr_out. ProfilerBase::start always installs a
+ *                     *host_ptr_out. ProfilerBase::set_memory_context always installs a
  *                     non-null reg wrapper — collectors do not need to
  *                     branch.
  * - free_:            free a previously allocated device pointer.
@@ -328,7 +328,7 @@ public:
     BufferPoolManager &operator=(const BufferPoolManager &) = delete;
 
     /**
-     * Configure the buffer pool's memory context. Called by ProfilerBase::start()
+     * Configure the buffer pool's memory context. Called by ProfilerBase::set_memory_context()
      * before any allocator-touching method (alloc_and_register_block /
      * free_buffer / resolve_host_ptr / drain_done_into_recycled) is invoked.
      * Must NOT be called concurrently with the mgmt thread.
@@ -347,6 +347,19 @@ public:
         shared_mem_host_ = shared_mem_host;
         shm_size_ = shm_size;
         device_id_ = device_id;
+    }
+
+    /**
+     * Forget the memory context without freeing buffers or clearing mappings.
+     * Call only after worker threads have stopped and resource cleanup is done;
+     * cleanup may still need the callbacks being cleared here.
+     */
+    void clear_memory_context() {
+        ops_ = MemoryOps{};
+        shared_mem_dev_ = nullptr;
+        shared_mem_host_ = nullptr;
+        shm_size_ = 0;
+        device_id_ = -1;
     }
 
     /**
@@ -1124,7 +1137,7 @@ private:
         return nullptr;
     }
 
-    // Subsystem inputs (set by ProfilerBase::start via set_memory_context).
+    // Subsystem inputs (set by ProfilerBase via set_memory_context).
     void *shared_mem_dev_{nullptr};
     void *shared_mem_host_{nullptr};
     size_t shm_size_{0};

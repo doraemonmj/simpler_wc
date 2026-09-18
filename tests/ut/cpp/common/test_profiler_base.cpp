@@ -32,6 +32,7 @@
 #include <cstring>
 #include <functional>
 #include <mutex>
+#include <new>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -130,6 +131,25 @@ public:
     uint32_t last_producer_queue() const { return last_producer_queue_.load(std::memory_order_relaxed); }
     int last_shard() const { return last_shard_.load(std::memory_order_relaxed); }
 
+    void init_shadow(void *device, void *host) {
+        this->set_aicpu_thread_num(1);
+        auto copy = [](void *dst, const void *src, size_t size) {
+            std::memcpy(dst, src, size);
+            return 0;
+        };
+        this->set_memory_context(
+            [](size_t size) {
+                return std::calloc(1, size);
+            },
+            nullptr,
+            [](void *ptr) {
+                std::free(ptr);
+                return 0;
+            },
+            copy, copy, device, host, sizeof(TestHeader), 0
+        );
+    }
+
     // Stand-in for a real Derived::init(): latch the thread count and hand the
     // base an identity-mapped (SVM-style) memory context.
     void
@@ -176,6 +196,101 @@ bool wait_for_collected(const Collector &c, int expected, std::chrono::milliseco
 }
 
 }  // namespace
+
+TEST(ProfilerBaseTest, ReinitializedContextIsAvailableBeforeStart) {
+    TestHeader previous{};
+    TestHeader current{};
+    TestCollector<PerThreadModule> collector;
+    collector.init(1, &previous);
+    collector.start(nullptr);
+    collector.stop();
+    collector.init(1, &current);
+    EXPECT_EQ(collector.manager().shared_mem_host(), &current);
+    EXPECT_EQ(collector.manager().shared_mem_dev(), &current);
+}
+
+TEST(ProfilerBaseTest, ReusedShadowWritesToTheCurrentDeviceRegionBeforeStart) {
+    TestHeader previous_device{};
+    TestHeader current_device{};
+    TestHeader reused_shadow{};
+    TestCollector<PerThreadModule> collector;
+    collector.init_shadow(&previous_device, &reused_shadow);
+    collector.start(nullptr);
+    collector.stop();
+    collector.init_shadow(&current_device, &reused_shadow);
+    reused_shadow.queue_heads[0] = 7;
+    ASSERT_EQ(collector.manager().write_range_to_device(&reused_shadow.queue_heads[0], sizeof(uint32_t)), 0);
+    EXPECT_EQ(previous_device.queue_heads[0], 0u);
+    EXPECT_EQ(current_device.queue_heads[0], 7u);
+    collector.manager().release_all_owned([](void *ptr) {
+        std::free(ptr);
+    });
+}
+
+TEST(ProfilerBaseTest, RebuiltShadowUsesNewOffsetBeforeStart) {
+    TestHeader device{};
+    // Reproduce the host-base displacement captured in the A5 #2220 failure
+    // while keeping the device allocation unchanged.
+    alignas(TestHeader) unsigned char storage[sizeof(TestHeader) + 352]{};
+    auto *previous_shadow = new (storage + 352) TestHeader{};
+    TestCollector<PerThreadModule> collector;
+    collector.init_shadow(&device, previous_shadow);
+    collector.start(nullptr);
+    collector.stop();
+    previous_shadow->~TestHeader();
+    auto *current_shadow = new (storage) TestHeader{};
+    collector.init_shadow(&device, current_shadow);
+    current_shadow->queue_heads[0] = 7;
+    ASSERT_EQ(collector.manager().write_range_to_device(&current_shadow->queue_heads[0], sizeof(uint32_t)), 0);
+    EXPECT_EQ(device.queue_heads[0], 7u);
+    collector.manager().release_all_owned([](void *ptr) {
+        std::free(ptr);
+    });
+    current_shadow->~TestHeader();
+}
+
+TEST(ProfilerBaseTest, IncompleteReinitializationCannotUsePreviousContext) {
+    TestHeader device{};
+    TestHeader shadow{};
+    TestCollector<PerThreadModule> collector;
+    collector.init_shadow(&device, &shadow);
+    collector.start(nullptr);
+    collector.stop();
+    collector.manager().release_all_owned([](void *ptr) {
+        std::free(ptr);
+    });
+
+    // Real collectors first publish null bases while allocating a new region.
+    // If allocation fails, no successful context publication or start follows.
+    collector.init_shadow(nullptr, nullptr);
+    EXPECT_EQ(collector.manager().shared_mem_host(), nullptr);
+    EXPECT_EQ(collector.manager().shared_mem_dev(), nullptr);
+    int spawned = 0;
+    collector.start([&](std::function<void()> fn) {
+        ++spawned;
+        return std::thread(std::move(fn));
+    });
+    EXPECT_EQ(spawned, 0);
+    collector.stop();
+}
+
+TEST(ProfilerBaseTest, ClearedContextCannotWriteToPreviousDevice) {
+    TestHeader device{};
+    TestHeader shadow{};
+    TestCollector<PerThreadModule> collector;
+    collector.init_shadow(&device, &shadow);
+    collector.start(nullptr);
+    collector.stop();
+    collector.manager().release_all_owned([](void *ptr) {
+        std::free(ptr);
+    });
+    collector.clear_memory_context();
+    shadow.queue_heads[0] = 7;
+    collector.manager().write_range_to_device(&shadow.queue_heads[0], sizeof(uint32_t));
+    EXPECT_EQ(device.queue_heads[0], 0u);
+    EXPECT_EQ(collector.manager().shared_mem_host(), nullptr);
+    EXPECT_EQ(collector.manager().shared_mem_dev(), nullptr);
+}
 
 // One drain+collector pair per AICPU thread when the module allows it.
 TEST(ProfilerBaseTest, ShardCountFollowsAicpuThreadNum) {
