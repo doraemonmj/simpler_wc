@@ -32,6 +32,11 @@ on:
         required: false
         default: "3.10"
         type: string
+      scheduler_timeout_ms:
+        description: Scheduler timeout budget in milliseconds.
+        required: false
+        default: "5000"
+        type: string
 
 jobs:
   run:
@@ -40,7 +45,7 @@ jobs:
     timeout-minutes: 30
     env:
       MANUAL_MODE: ${{ inputs.manual_mode }}
-      SIMPLER_SCHEDULER_TIMEOUT_MS: "5000"
+      SIMPLER_SCHEDULER_TIMEOUT_MS: ${{ inputs.scheduler_timeout_ms }}
     steps:
       - name: Checkout target
         uses: actions/checkout@v5

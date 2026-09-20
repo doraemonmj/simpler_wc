@@ -24,6 +24,7 @@ jobs:
       setup_variant: github
       include_dfx_smokes: true
       manual_mode: include
+      scheduler_timeout_ms: "10000"
 
   st-sim-a5:
     strategy:
@@ -36,6 +37,7 @@ jobs:
       setup_variant: github
       include_dfx_smokes: true
       manual_mode: include
+      scheduler_timeout_ms: "10000"
 
   st-onboard-a2a3:
     uses: ./.github/workflows/_st-npu-a2a3.yml
