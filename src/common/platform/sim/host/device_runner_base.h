@@ -347,14 +347,12 @@ public:
         if (pipeline_slot >= host_phase_runs_.size()) return;
         host_phase_runs_[pipeline_slot].records.finish(submitted_tasks, invocation_id);
     }
-    /** Hand this run's captured clock session to the resident collector, at launch. */
+    /** Hand this run's host-phase state to the resident collector, at launch. */
     void publish_host_phase_run_to_collector(uint32_t pipeline_slot) noexcept;
-    /** Create this run's provider and sample its HostOrchestrationBegin anchors. */
-    void capture_clock_correlation_begin(HostPhaseRunState &run) noexcept;
-    /** Hand this pass's records to the swimlane reader, just before its export. */
     bool host_clock_alignment_log_required(uint32_t pipeline_slot) const {
         return pipeline_slot < host_phase_runs_.size() && host_phase_runs_[pipeline_slot].needs_clock_alignment();
     }
+    /** Hand this pass's records to the swimlane reader, just before its export. */
     void publish_host_phase_records_to_swimlane(uint32_t pipeline_slot);
     /**
      * Publish arch-specific runtime metadata into the swimlane export, between
@@ -372,7 +370,7 @@ public:
      * with arch-specific collectors (`dep_gen_collector_`) call this and then
      * open and start their own.
      */
-    void start_shared_collectors_for_run(const DfxRunConfig &dfx, uint32_t pipeline_slot);
+    void start_shared_collectors_for_run(const DfxRunConfig &dfx);
     /**
      * Resolve and reserve this run's chip-swimlane terminal-snapshot bank, and
      * return its device address for KernelArgs.
@@ -406,9 +404,6 @@ public:
     void teardown_shared_collectors_after_run(
         const DfxRunConfig &dfx, uint32_t pipeline_slot, uint64_t run_epoch, bool device_execution_complete
     );
-    /** Start the level-4 Host/Device clock correlation once per run. */
-    void begin_clock_correlation_session_if_needed(uint32_t pipeline_slot) noexcept;
-    void finish_clock_correlation_session(uint32_t pipeline_slot, bool capture_device_complete) noexcept;
     // Diagnostic artifact root directory (CallConfig::validate() enforces non-empty
     // upstream when any diagnostic is enabled).
     void set_output_prefix(const char *prefix) { output_prefix_ = (prefix != nullptr) ? prefix : ""; }
@@ -645,8 +640,6 @@ protected:
     // onboard base's, which is what lets the shared host-phase code index by
     // slot without a per-platform branch.
     std::array<HostPhaseRunState, PTO_PIPELINE_MAX_DEPTH> host_phase_runs_{};
-    // Which slot's session the resident collector holds; see the onboard base.
-    uint32_t clock_correlation_session_slot_{PTO_PIPELINE_MAX_DEPTH};
     ArgsDumpCollector dump_collector_;
     PmuCollector pmu_collector_;
     ScopeStatsCollector scope_stats_collector_;

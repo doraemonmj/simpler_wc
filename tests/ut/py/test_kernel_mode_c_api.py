@@ -127,7 +127,6 @@ class CallConfig(ctypes.Structure):
         ("enable_pmu", ctypes.c_int32),
         ("enable_dep_gen", ctypes.c_int32),
         ("enable_scope_stats", ctypes.c_int32),
-        ("capture_clock_anchors", ctypes.c_int32),
         ("runtime_env", ctypes.c_uint64 * _RUNTIME_ENV_UINT64_FIELDS),
         ("output_prefix", ctypes.c_char * _OUTPUT_PREFIX_BYTES),
     ]

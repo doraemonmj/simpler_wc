@@ -479,7 +479,7 @@ DeviceRunner::launch_execution(std::unique_ptr<PreparedExecution> prepared, Laun
                 if (int fence_rc = arm_run_fence(*prepared); fence_rc != 0) return fence_rc;
                 (void)arm_device_wall_buffer(prepared->pipeline_slot, prepared->kernel_args);
                 if (int arm_rc = arm_collectors_for_run(runtime, *prepared); arm_rc != 0) return arm_rc;
-                start_shared_collectors_for_run(prepared->dfx, prepared->pipeline_slot);
+                start_shared_collectors_for_run(prepared->dfx);
                 if (prepared->dfx.dep_gen_enabled && !dep_gen_host_graph_active()) {
                     auto thread_factory = [this](std::function<void()> fn) {
                         return create_thread(std::move(fn));
@@ -1127,9 +1127,9 @@ int DeviceRunner::arm_collectors_for_run(const Runtime &runtime, PreparedExecuti
     latch_collector_shape(num_aicore, aicpu_thread_num, active_aicpu_num);
 
     // Between the stale-shape release and the init: finalize() resets
-    // host_orchestrated_ and the collector's clock session, and initialize()
-    // reads host_orchestrated_ when it decides whether to size a device orch
-    // phase pool. Publishing before the release would lose both.
+    // host_orchestrated_, and initialize() reads it when it decides whether to
+    // size a device orch phase pool. Publishing before the release would lose
+    // that state.
     publish_host_phase_run_to_collector(prepared.pipeline_slot);
 
     // This run's bank, so a run that arms none publishes 0 rather than whatever

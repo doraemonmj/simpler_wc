@@ -16,8 +16,8 @@
  * Every value here is a literal, so the same fixture serializes to the same
  * bytes on every machine and every build. It reaches SCHED_PHASES and populates
  * each stream the writer can emit — AICore tasks, AICPU tasks, sched phases with
- * a non-zero device drop count, orchestrator phases, host phases, clock anchors
- * and one JSON extension — so that no emitted field and neither shared-memory
+ * a non-zero device drop count, orchestrator phases, host phases and one JSON
+ * extension — so that no emitted field and neither shared-memory
  * header read is left uncovered.
  *
  * Only the public collector API and direct shared-memory writes are used, so
@@ -188,23 +188,6 @@ inline void populate(ChipSwimlaneCollector &collector, PhaseBuffers &buffers, co
     collector.report_run_terminal_snapshot(/*bank_index=*/0, kEpoch);
 
     collector.set_json_extension(ChipSwimlaneExtensionSection::AicpuLifecycleRecords, "[[11, 12]]");
-
-    collector.begin_clock_correlation_session("fixture_provider", "raw_ticks");
-    std::vector<simpler::dfx::ClockAnchorSample> samples(2);
-    samples[0].position = simpler::dfx::ClockAnchorPosition::HostOrchestrationBegin;
-    samples[0].sample_idx = 0;
-    samples[0].host_before_ns = 400;
-    samples[0].host_after_ns = 420;
-    samples[0].raw_device_timestamp = 800;
-    samples[0].device_cycles = 900;
-    samples[1].position = simpler::dfx::ClockAnchorPosition::DeviceExecutionComplete;
-    samples[1].sample_idx = 1;
-    samples[1].host_before_ns = 500;
-    samples[1].host_after_ns = 530;
-    samples[1].raw_device_timestamp = 0;
-    samples[1].device_cycles = 0;
-    collector.record_clock_anchor_samples(samples);
-    collector.finish_clock_correlation_session();
 
     std::vector<HostPhaseRecord> submits(1);
     submits[0].index = 1;

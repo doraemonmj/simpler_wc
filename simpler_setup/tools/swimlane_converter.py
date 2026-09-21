@@ -568,8 +568,7 @@ def _write_clock_alignment_record(path, raw, record):
 
 def _host_record_bounds(raw):
     values = []
-    # These are Host-clock records. clock_anchors samples can lie outside the
-    # invocation and must not participate in matching it.
+    # These are Host-clock records, and only they bound the invocation.
     for name in ("host_orchestrator_phases", "host_device_uploads"):
         for record in containment._phase_records(raw.get(name)):
             values.extend(int(record[field]) for field in ("start_host_ns", "end_host_ns") if record.get(field, 0) > 0)

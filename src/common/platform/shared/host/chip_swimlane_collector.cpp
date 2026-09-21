@@ -1896,18 +1896,6 @@ void ChipSwimlaneCollector::set_host_phase_records(
     host_phase_records_present_ = true;
 }
 
-void ChipSwimlaneCollector::begin_clock_correlation_session(
-    const char *provider_name, const char *raw_device_timestamp_unit
-) {
-    clock_correlation_session_.begin(provider_name, raw_device_timestamp_unit);
-}
-
-void ChipSwimlaneCollector::record_clock_anchor_samples(std::vector<simpler::dfx::ClockAnchorSample> samples) {
-    clock_correlation_session_.append(std::move(samples));
-}
-
-void ChipSwimlaneCollector::finish_clock_correlation_session() { clock_correlation_session_.finish(); }
-
 ChipSwimlaneCollector::RunExport ChipSwimlaneCollector::seal_run_export() {
     RunExport data;
 
@@ -1958,11 +1946,6 @@ ChipSwimlaneCollector::RunExport ChipSwimlaneCollector::seal_run_export() {
     data.host_phase_submitted_tasks = host_phase_submitted_tasks_;
     data.host_phase_total_records = host_phase_total_records_;
     data.host_phase_dropped_records = host_phase_dropped_records_;
-
-    data.clock_started = clock_correlation_session_.started();
-    data.clock_provider_name = clock_correlation_session_.provider_name();
-    data.clock_raw_device_timestamp_unit = clock_correlation_session_.raw_device_timestamp_unit();
-    data.clock_samples = clock_correlation_session_.samples();
 
     // The header fields the writer used to read mid-serialization. Reading them
     // here is what removes the writer's last dependency on the region.
@@ -2020,7 +2003,6 @@ int ChipSwimlaneCollector::write_swimlane_json(const RunExport &data) {
     // HBG can contain only host-side dummy/hidden-allocation records and no
     // AICore dispatch at all.
     bool has_any_records = !data.host_submit_records.empty() || !data.host_upload_records.empty() ||
-                           data.clock_started ||
                            std::any_of(data.json_extensions.begin(), data.json_extensions.end(), [](const auto &value) {
                                return !value.empty();
                            });
@@ -2144,64 +2126,11 @@ int ChipSwimlaneCollector::write_swimlane_json(const RunExport &data) {
             outfile << "\"record_count_mismatch\"}";
         }
     }
-    if (data.host_phase_records_present || data.clock_started) {
+    if (data.host_phase_records_present) {
         const std::string host_clock_domain_id = linux_boot_clock_domain_id();
         if (!host_clock_domain_id.empty()) {
             outfile << ",\n    \"host_clock_domain_id\": \"" << host_clock_domain_id << "\"";
         }
-    }
-    if (data.clock_started) {
-        uint64_t host_timeline_origin_ns = 0;
-        for (const auto &sample : data.clock_samples) {
-            if (sample.position != simpler::dfx::ClockAnchorPosition::HostOrchestrationBegin || !sample.valid()) {
-                continue;
-            }
-            const uint64_t midpoint = sample.host_before_ns + (sample.host_after_ns - sample.host_before_ns) / 2;
-            if (host_timeline_origin_ns == 0 || midpoint < host_timeline_origin_ns) {
-                host_timeline_origin_ns = midpoint;
-            }
-        }
-        if (host_timeline_origin_ns != 0) {
-            outfile << ",\n    \"host_timeline_origin_ns\": " << host_timeline_origin_ns;
-        }
-        outfile << ",\n    \"clock_anchors\": {";
-        outfile << "\n      \"provider\": \"" << data.clock_provider_name << "\",";
-        outfile << "\n      \"device_timestamp_unit\": \"syscnt_cycles\",";
-        outfile << "\n      \"raw_device_timestamp_unit\": \"" << data.clock_raw_device_timestamp_unit << "\",";
-        outfile << "\n      \"samples_per_position\": " << simpler::dfx::kClockAnchorSamplesPerPosition << ",";
-        outfile << "\n      \"samples\": [";
-        bool first_anchor = true;
-        for (const auto &sample : data.clock_samples) {
-            if (!first_anchor) outfile << ",";
-            const uint64_t rtt_ns =
-                sample.host_after_ns >= sample.host_before_ns ? sample.host_after_ns - sample.host_before_ns : 0;
-            outfile << "\n        {\"position\": \"" << simpler::dfx::clock_anchor_position_name(sample.position)
-                    << "\", \"sample_idx\": " << sample.sample_idx << ", \"host_before_ns\": " << sample.host_before_ns
-                    << ", \"raw_device_timestamp\": ";
-            if (sample.raw_device_timestamp == 0) {
-                outfile << "null";
-            } else {
-                outfile << sample.raw_device_timestamp;
-            }
-            outfile << ", \"device_cycles\": ";
-            if (sample.device_cycles == 0) {
-                outfile << "null";
-            } else {
-                outfile << sample.device_cycles;
-            }
-            outfile << ", \"host_after_ns\": " << sample.host_after_ns << ", \"rtt_ns\": " << rtt_ns
-                    << ", \"uncertainty_ns\": " << (rtt_ns + 1) / 2 << ", \"error\": ";
-            if (sample.error_stage == simpler::dfx::ClockAnchorErrorStage::None && sample.error_code == 0) {
-                outfile << "null";
-            } else {
-                outfile << "{\"stage\": \"" << simpler::dfx::clock_anchor_error_stage_name(sample.error_stage)
-                        << "\", \"code\": " << sample.error_code << "}";
-            }
-            outfile << "}";
-            first_anchor = false;
-        }
-        if (!first_anchor) outfile << "\n      ";
-        outfile << "]\n    }";
     }
     if (!data.core_to_thread.empty()) {
         outfile << ",\n    \"core_to_thread\": [";
@@ -2473,7 +2402,6 @@ int ChipSwimlaneCollector::finalize(
     collected_orch_phase_records_.clear();
     host_submit_records_.clear();
     host_upload_records_.clear();
-    clock_correlation_session_.reset();
     perf_records_by_collector_.clear();
     aicore_records_by_collector_.clear();
     sched_phase_records_by_collector_.clear();

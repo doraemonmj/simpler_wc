@@ -924,9 +924,6 @@ static int cleanup_failed_prepare(OnboardNativeRunContext *state, int execution_
     const long long trace_start_ns = state->trace_start_ns;
     char trace_attrs[sizeof(state->trace_attrs)];
     std::memcpy(trace_attrs, state->trace_attrs, sizeof(trace_attrs));
-    state->runner->finish_clock_correlation_session(
-        state->descriptor.pipeline_slot, false, !state->runner->can_accept_run()
-    );
     // A prepare that failed produced no device work, so there is no status to
     // read and nothing written to copy back. Whatever bindings its bind got as
     // far as recording are this attempt's, and end with it.
@@ -1100,8 +1097,8 @@ int simpler_prepare_run(
         // nothing the two runs share.
         runner->arm_host_dep_gen_capture(config->enable_dep_gen != 0);
         // Same reason, different state: a host-orchestrating bind records phase
-        // events and samples its clock anchor, and both belong to the run doing
-        // the binding rather than to whichever run last held the claim.
+        // events that belong to the run doing the binding rather than to
+        // whichever run last held the claim.
         runner->begin_host_phase_run(state->descriptor.pipeline_slot, DfxRunConfig::from(*config));
 
         {
@@ -1475,12 +1472,6 @@ int simpler_finalize_run(DeviceContextHandle ctx, RuntimeHandle runtime) {
         state->runner_resources_owned = false;
     }
 
-    // The collector's session is still resident even though the provider and the
-    // anchors are per-run, so finish it before releasing either ownership token,
-    // after which a successor may publish its own.
-    state->runner->finish_clock_correlation_session(
-        state->descriptor.pipeline_slot, false, !state->runner->can_accept_run()
-    );
     const bool export_clock_log = launched && execution_rc == 0 && validation_rc == 0 &&
                                   state->runner->host_clock_alignment_log_required(state->descriptor.pipeline_slot);
     if (state->runner_claimed) {

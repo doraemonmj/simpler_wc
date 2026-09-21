@@ -29,9 +29,8 @@ lower endpoint and narrows the published ``slack`` to the interval that remains.
 The rendering selects the later of the runner start and launch time as the
 block's start. It does not measure the true device start or clock offset.
 
-This module does not consume the capture's ``clock_anchors`` samples. Two
-unknowns stand between a raw cycle and the Host axis, and containment bounds
-both:
+Two unknowns stand between a raw cycle and the Host axis, and containment
+bounds both:
 
 ``origin_cycles``
     The cycle that device-phase time zero sits on. The host log carries the

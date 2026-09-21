@@ -133,15 +133,10 @@ class TestDeviceOrchestrationClockCapture(TestChipSwimlane):
                 records = json.loads(path.read_text())
                 assert any(records.get("aicpu_orchestrator_phases", [])), "AICPU orchestration records missing"
                 assert "orchestrator_source" not in records["metadata"]
-                anchors = records["metadata"].get("clock_anchors", {}).get("samples", [])
-                assert any(sample["error"] is None and sample["device_cycles"] > 0 for sample in anchors), (
-                    "no valid clock anchor was captured"
-                )
 
     def _build_config(self, config_dict, *args, **kwargs):
         config = super()._build_config(config_dict, *args, **kwargs)
         config.enable_chip_swimlane = self._swimlane_level
-        config.capture_clock_anchors = bool(self._swimlane_level)
         if not config.output_prefix:
             config.output_prefix = str(build_output_prefix(f"{type(self).__name__}_{time.monotonic_ns()}"))
         if self._swimlane_level:

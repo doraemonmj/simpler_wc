@@ -306,16 +306,15 @@ platform_case(test_args_dump_run_identity.cpp PER_ARCH
         ${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp)
 
 # The two production sides every chip_swimlane case compiles — the host
-# collector and the AICPU producer module — with the arch's sim regs, clock
-# correlation and profiling copy under them. @arch@ expands per combination, in
-# the factory. The five cases below all take this list; it is one list because
-# they cover one pair of sides.
+# collector and the AICPU producer module — with the arch's sim regs and
+# profiling copy under them. @arch@ expands per combination, in the factory.
+# The five cases below all take this list; it is one list because they cover
+# one pair of sides.
 set(CHIP_SWIMLANE_CASE_SOURCES
     ${SIMPLER_COMMON_PLATFORM_DIR}/shared/host/chip_swimlane_collector.cpp
     ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/chip_swimlane_collector_aicpu.cpp
     ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/device_run_result_base_aicpu.cpp
     ${SIMPLER_SRC}/@arch@/platform/sim/aicpu/inner_platform_regs.cpp
-    ${SIMPLER_COMMON_PLATFORM_DIR}/shared/host/clock_correlation.cpp
     ${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp)
 
 # The collector pair carries both real sides: the host collector fills the bank
@@ -363,7 +362,6 @@ platform_case(test_chip_swimlane_run_export.cpp
         ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/chip_swimlane_collector_aicpu.cpp
         ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/device_run_result_base_aicpu.cpp
         ${SIMPLER_SRC}/@arch@/platform/sim/aicpu/inner_platform_regs.cpp
-        ${SIMPLER_COMMON_PLATFORM_DIR}/shared/host/clock_correlation.cpp
         ${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp)
 
 # The same two sides, reading the transport rather than the record: support/
@@ -379,7 +377,6 @@ platform_case(test_chip_swimlane_run_terminal_transport.cpp
         ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/chip_swimlane_collector_aicpu.cpp
         ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/device_run_result_base_aicpu.cpp
         ${SIMPLER_SRC}/@arch@/platform/sim/aicpu/inner_platform_regs.cpp
-        ${SIMPLER_COMMON_PLATFORM_DIR}/shared/host/clock_correlation.cpp
     INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/support)
 
 platform_case(test_host_phase_records.cpp PER_ARCH PER_RUNTIME

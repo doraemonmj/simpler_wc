@@ -111,8 +111,8 @@ echo "$RECORDS"          # must name exactly one file; empty ⇒ this run wrote 
                          # so stop rather than reading a previous run's artifact
 D=$(dirname "$RECORDS")
 grep -c 'name=chip.run.bind\.' "$D"/host.*.log   # must be > 0; $LOG has none in this mode
-# The clock anchors are split — the invoking process wrote its own to $LOG, each
-# chip child wrote its own under $D — so parse the concatenation, not either half.
+# The spans are split — the invoking process wrote its own to $LOG, each chip
+# child wrote its own under $D — so parse the concatenation, not either half.
 cat "$LOG" "$D"/host.*.log > "$D/bind_timeline.log"
 python -m simpler_setup.tools.strace_timing "$D/bind_timeline.log" \
   --host-phase-records "$RECORDS" \

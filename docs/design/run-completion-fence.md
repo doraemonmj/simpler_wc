@@ -283,11 +283,9 @@ it has submitted nothing and rolls back.
 `aclrtQueryEventWaitStatus` is not used: the question asked here is whether the
 recorded boundary has been reached, which is the *recorded* status.
 
-These are kept deliberately separate from the `ACL_EVENT_TIME_LINE` events
-`clock_correlation.cpp` owns on its own stream. Those exist to be read for a
-timestamp and have their own lifetime contract; sharing one event between a
-completion fence and a timing reader would couple two lifetimes that have no
-reason to agree.
+The events are created with `ACL_EVENT_SYNC`, the completion-only flag: a fence
+boundary is never read for a timestamp, so it carries none of the timeline cost
+a readable `ACL_EVENT_TIME_LINE` event would.
 
 ## Submitted work with no boundary
 

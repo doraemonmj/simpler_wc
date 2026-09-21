@@ -68,17 +68,6 @@ constexpr const char *kGoldenArtifact = R"GOLDEN({
     "timeline_relation": "host_orchestration_precedes_device",
     "host_capture": {"status": "complete", "expected_records": 1, "recorded_records": 1, "pool_records": 3, "dropped_records": 0, "error": null},
     "host_clock_domain_id": "<HOST_CLOCK_DOMAIN_ID>",
-    "host_timeline_origin_ns": 410,
-    "clock_anchors": {
-      "provider": "fixture_provider",
-      "device_timestamp_unit": "syscnt_cycles",
-      "raw_device_timestamp_unit": "raw_ticks",
-      "samples_per_position": 3,
-      "samples": [
-        {"position": "pre_host_orchestration", "sample_idx": 0, "host_before_ns": 400, "raw_device_timestamp": 800, "device_cycles": 900, "host_after_ns": 420, "rtt_ns": 20, "uncertainty_ns": 10, "error": null},
-        {"position": "post_device_execution", "sample_idx": 1, "host_before_ns": 500, "raw_device_timestamp": null, "device_cycles": null, "host_after_ns": 530, "rtt_ns": 30, "uncertainty_ns": 15, "error": null}
-      ]
-    },
     "core_to_thread": [0, 1]
   },
   "aicore_tasks": [
@@ -240,7 +229,6 @@ TEST(ChipSwimlaneRunExportTest, SealedScopeSurvivesBeginRunAndFinalize) {
     EXPECT_EQ(data.sched_phase_dropped_records[0], fixture::kSchedDropped);
     EXPECT_EQ(data.num_orch_phase_threads, 1u);
     EXPECT_TRUE(data.host_phase_records_present);
-    EXPECT_TRUE(data.clock_started);
     EXPECT_EQ(data.armed_run_epoch, fixture::kEpoch);
     EXPECT_TRUE(data.terminal_reported);
 
@@ -274,11 +262,6 @@ TEST(ChipSwimlaneRunExportTest, SealCapturesEveryPopulatedFieldGroup) {
     ASSERT_EQ(data.host_upload_records.size(), 1u);
     EXPECT_EQ(data.host_phase_submitted_tasks, 1u);
     EXPECT_EQ(data.host_phase_total_records, 3u);
-
-    EXPECT_EQ(data.clock_provider_name, "fixture_provider");
-    EXPECT_EQ(data.clock_raw_device_timestamp_unit, "raw_ticks");
-    ASSERT_EQ(data.clock_samples.size(), 2u);
-    EXPECT_EQ(data.clock_samples[0].raw_device_timestamp, 800u);
 
     EXPECT_EQ(
         data.json_extensions[static_cast<size_t>(ChipSwimlaneExtensionSection::AicpuLifecycleRecords)], "[[11, 12]]"
@@ -365,8 +348,6 @@ TEST(ChipSwimlaneRunExportTest, HostClockDomainIdOmittedWithoutHostPhaseOrClock)
 
     ChipSwimlaneCollector::RunExport data = collector.seal_run_export();
     data.host_phase_records_present = false;
-    data.clock_started = false;
-
     ASSERT_EQ(ChipSwimlaneCollector::write_swimlane_json(data), 0);
     const std::string raw = read_file(artifact_path(scratch.path));
     EXPECT_EQ(raw.find(fixture::kHostClockDomainIdKey), std::string::npos);

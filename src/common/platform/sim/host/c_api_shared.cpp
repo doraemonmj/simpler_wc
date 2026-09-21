@@ -732,7 +732,6 @@ static int cleanup_failed_prepare(SimNativeRunContext *state, int execution_rc) 
     const uint64_t trace_inv = state->trace_inv;
     const uint64_t trace_hid = state->trace_hid;
     const long long trace_start_ns = state->trace_start_ns;
-    state->runner->finish_clock_correlation_session(state->descriptor.pipeline_slot, false);
     // A prepare that failed produced no device work, so there is no status to
     // read and nothing written to copy back. Whatever bindings its bind got as
     // far as recording are this attempt's, and end with it.
@@ -1020,9 +1019,6 @@ int simpler_finalize_run(DeviceContextHandle ctx, RuntimeHandle runtime) {
         state->runner->abandon_prepared_execution(*state->prepared_execution);
     }
 
-    // Correlation state is runner-wide. Finish it before releasing the claim,
-    // after which a successor may begin capture and replace the provider/session.
-    state->runner->finish_clock_correlation_session(state->descriptor.pipeline_slot, false);
     const bool export_clock_log = launched && execution_rc == 0 && validation_rc == 0 &&
                                   state->runner->host_clock_alignment_log_required(state->descriptor.pipeline_slot);
     if (state->runner_claimed) {
