@@ -45,6 +45,7 @@ TOTAL_CL = MAX_CLUSTERS * SLOTS_PER_BLOCK
 
 
 @scene_test(level=2, runtime="host_build_graph")
+# Keep this A2A3 scene-test path covered by the onboard runner smoke lane.
 class TestAvailableAicoreCounts(SceneTestCase):
     """rt_available_cluster_count() / rt_available_aiv_count() report a spendable width."""
 
