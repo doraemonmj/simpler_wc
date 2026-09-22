@@ -20,13 +20,7 @@ export SIMPLER_OP_EXECUTE_TIMEOUT_US=3000000
 export SIMPLER_STREAM_SYNC_TIMEOUT_MS=4000
 ```
 
-For sim-only Per-PR runs, CI sets only:
-
-```bash
-export SIMPLER_SCHEDULER_TIMEOUT_MS=5000
-```
-
-Daily sim jobs use a 10 s budget for the full manual sweep:
+For sim-only CI runs, CI sets:
 
 ```bash
 export SIMPLER_SCHEDULER_TIMEOUT_MS=10000

@@ -35,7 +35,7 @@ on:
       scheduler_timeout_ms:
         description: Scheduler timeout budget in milliseconds.
         required: false
-        default: "5000"
+        default: "10000"
         type: string
 
 jobs:
