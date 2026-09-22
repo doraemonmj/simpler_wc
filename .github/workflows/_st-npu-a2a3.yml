@@ -35,8 +35,6 @@ jobs:
       SIMPLER_SCHEDULER_TIMEOUT_MS: "2000"
       SIMPLER_OP_EXECUTE_TIMEOUT_US: "3000000"
       SIMPLER_STREAM_SYNC_TIMEOUT_MS: "4000"
-      # Temporary PR validation path; the host default remains untouched.
-      CANN_ENV: /data/cann_version/0901/cann-9.2.0-beta.2/set_env.sh
     steps:
       - name: Checkout target
         uses: actions/checkout@v5
@@ -71,7 +69,6 @@ jobs:
           install-torch: "false"
           system-site-packages: "true"
           source-cann: "true"
-          cann-env: ${{ env.CANN_ENV }}
 
       - name: Warn when graphviz is missing
         if: inputs.include_dfx_smokes
@@ -82,7 +79,7 @@ jobs:
 
       - name: Compile scene-test kernels (a2a3)
         run: |
-          source "$CANN_ENV"
+          source /usr/local/Ascend/cann/set_env.sh
           .venv/bin/python -m simpler_setup.tools.scene_test_compile examples tests/st \
             --platform a2a3 --exclude-level 4 --require-pto-isa --compile-workers 8 -q \
             --manual "$MANUAL_MODE"
@@ -92,7 +89,7 @@ jobs:
         env:
           TORCH_DEVICE_BACKEND_AUTOLOAD: "0"
         run: |
-          source "$CANN_ENV"
+          source /usr/local/Ascend/cann/set_env.sh
           # discover_runtimes is the one definition of what a runtime is — a
           # directory under src/<arch>/runtime with a build_config.py — so a new
           # one is compiled here without editing this list into existence. An
@@ -109,14 +106,14 @@ jobs:
 
       - name: Run pytest scene tests (a2a3)
         run: |
-          source "$CANN_ENV"
+          source /usr/local/Ascend/cann/set_env.sh
           task-submit --timeout 1800 --max-time 1800 --device auto --device-num "$DEVICE_NUM" \
             --run ".venv/bin/python -m pytest examples tests/st -m 'not sdma' --platform a2a3 --exclude-level 4 --device \$TASK_DEVICE -v --require-pto-isa --pto-session-timeout 1200 --manual '$MANUAL_MODE'"
 
       - name: SDMA pytest (a2a3)
         if: inputs.manual_mode != 'only'
         run: |
-          source "$CANN_ENV"
+          source /usr/local/Ascend/cann/set_env.sh
           SDMA_TESTS="examples tests/st -m sdma"
           task-submit --timeout 1800 --max-time 1800 --device auto --device-num 2 \
             --run ".venv/bin/python -m pytest $SDMA_TESTS --platform a2a3 --device \$TASK_DEVICE -v --require-pto-isa --pto-session-timeout 600"
@@ -126,4 +123,3 @@ jobs:
         uses: ./.github/actions/run-onboard-dfx-smokes
         with:
           platform: a2a3
-          cann-env: ${{ env.CANN_ENV }}
