@@ -42,7 +42,6 @@
 #include "common/host_api.h"
 #include "common/platform_config.h"
 #include "aicpu/platform_aicpu_affinity.h"  // MAX_GATE_THREADS (aicpu_allowed_cpus bound)
-#include "common/scheduler_cluster_partition.h"
 #include "dispatch_payload.h"
 #include "aicore_teardown.h"
 #include "callable_limits.h"
@@ -196,7 +195,6 @@ struct alignas(64) DeviceRuntimeLaunchDesc {
     // popcount(OCCUPY) via the topology probe. See the matching field in
     // src/common/host_build_graph/runtime.h for rationale.
     int32_t aicpu_launch_count;
-    pto::a5::SchedulerClusterAssignment scheduler_cluster_assignment{pto::a5::SchedulerClusterAssignment::kRoundRobin};
 
     // Reference to the active callable's registration-owned func_id ->
     // CoreCallable object address table: the device address of entry 0 and the
@@ -309,12 +307,6 @@ public:
     void set_aicpu_allowed_cpu_count(int32_t n) { dev.aicpu_allowed_cpu_count = n; }
     int32_t get_aicpu_launch_count() const { return dev.aicpu_launch_count; }
     void set_aicpu_launch_count(int32_t n) { dev.aicpu_launch_count = n; }
-    pto::a5::SchedulerClusterAssignment get_scheduler_cluster_assignment() const {
-        return dev.scheduler_cluster_assignment;
-    }
-    void set_scheduler_cluster_assignment(pto::a5::SchedulerClusterAssignment assignment) {
-        dev.scheduler_cluster_assignment = assignment;
-    }
     int32_t *get_aicpu_allowed_cpus() { return dev.aicpu_allowed_cpus; }
     size_t aicpu_allowed_cpus_capacity() const {
         return sizeof(dev.aicpu_allowed_cpus) / sizeof(dev.aicpu_allowed_cpus[0]);
