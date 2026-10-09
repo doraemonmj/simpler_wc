@@ -54,11 +54,14 @@ jobs:
           esac
 
       - name: Restore scene-test kernel cache (a5)
-        uses: actions/cache@v5
+        id: scene-kernel-cache
+        uses: actions/cache/restore@v5
         with:
           path: build/cache/kernels
-          key: scene-kernels-a5-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-${{ inputs.ref || github.sha }}
+          key: scene-kernels-a5-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-${{ inputs.manual_mode }}-cases-v1-${{ hashFiles('examples/**', '!examples/a2a3/**', 'tests/st/**', '!tests/st/a2a3/**') }}-inputs-v1-${{ hashFiles('src/common/**', 'src/a5/**', 'python/**', 'simpler_setup/**') }}
           restore-keys: |
+            scene-kernels-a5-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-${{ inputs.manual_mode }}-cases-v1-${{ hashFiles('examples/**', '!examples/a2a3/**', 'tests/st/**', '!tests/st/a2a3/**') }}-
+            scene-kernels-a5-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-${{ inputs.manual_mode }}-
             scene-kernels-a5-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-
 
       - name: Set up environment
@@ -96,6 +99,13 @@ jobs:
             .venv/bin/python "examples/a5/$runtime/qwen3_14b_decode/main.py" \
               --platform a5 --compile-only --compile-workers 8
           done
+
+      - name: Save scene-test kernel cache (a5)
+        if: steps.scene-kernel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: build/cache/kernels
+          key: ${{ steps.scene-kernel-cache.outputs.cache-primary-key }}
 
       - name: Run pytest scene tests (a5)
         run: |

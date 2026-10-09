@@ -54,11 +54,14 @@ jobs:
           esac
 
       - name: Restore scene-test kernel cache (a2a3)
-        uses: actions/cache@v5
+        id: scene-kernel-cache
+        uses: actions/cache/restore@v5
         with:
           path: build/cache/kernels
-          key: scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-${{ inputs.ref || github.sha }}
+          key: scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-${{ inputs.manual_mode }}-cases-v1-${{ hashFiles('examples/**', '!examples/a5/**', 'tests/st/**', '!tests/st/a5/**') }}-inputs-v1-${{ hashFiles('src/common/**', 'src/a2a3/**', 'python/**', 'simpler_setup/**') }}
           restore-keys: |
+            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-${{ inputs.manual_mode }}-cases-v1-${{ hashFiles('examples/**', '!examples/a5/**', 'tests/st/**', '!tests/st/a5/**') }}-
+            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-${{ inputs.manual_mode }}-
             scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-
 
       - name: Set up environment
@@ -103,6 +106,13 @@ jobs:
             .venv/bin/python "examples/a2a3/$runtime/qwen3_14b_decode/main.py" \
               --platform a2a3 --compile-only --compile-workers 8
           done
+
+      - name: Save scene-test kernel cache (a2a3)
+        if: steps.scene-kernel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: build/cache/kernels
+          key: ${{ steps.scene-kernel-cache.outputs.cache-primary-key }}
 
       # Three selections over one corpus, disjoint and exhaustive: a test with
       # neither marker lands here, `sdma` alone in the demo task, and

@@ -374,7 +374,33 @@ unbuildable kernel costing the whole batch its results.
 
 `actions/checkout` cleans ignored files before each job, so the onboard jobs
 restore and save `build/cache/kernels/` through `actions/cache`. Cache keys are
-partitioned by target architecture, runner OS/architecture, and PTO-ISA pin.
+partitioned by target architecture, runner OS/architecture, PTO-ISA pin, and
+manual-test selection (`exclude`, `include`, or `only`). They fingerprint the
+scene-test case trees for that target, including shared case directories but
+excluding the sibling architecture's directories, so unchanged cases keep an
+exact key instead of creating one cache per CI run. A changed case restores the
+newest compatible snapshot and saves its new revision immediately after
+compilation, before a later device-test failure can discard the completed
+compile. A coarse compilation-input fingerprint covers the target and common
+runtime trees, Python bindings, and `simpler_setup`. When those inputs change,
+the job restores the previous snapshot for the same case tree, lets the inner
+content keys reuse unaffected artifacts and compile only invalidated ones, then
+saves the updated immutable snapshot. `cases-v1` and `inputs-v1` are the two
+outer-key schema epochs; increment the corresponding epoch when its fingerprint
+coverage or the archive layout changes incompatibly.
+
+This outer key is a transport optimization, not the correctness boundary. It
+uses a deliberately broad compilation-input fingerprint so a repository change
+may create a new snapshot even when no artifact changes. The content-addressed
+keys inside the archive include each artifact's actual source/include closure
+and compiler inputs, so an unrelated source change still reuses every artifact
+while a relevant dependency change recompiles only the affected artifacts.
+The DeepSeek-only job first restores its small private cache. On a miss it can
+read the exact `manual-include` full a2a3 cache produced by Daily on the default
+branch, allowing unrelated PRs with unchanged cases to share the compiled
+kernels without accidentally selecting a narrower per-PR `manual-exclude`
+archive. That full archive is not copied back into each PR's DeepSeek cache
+family.
 The callable key covers the contents of its orchestration, incore, and
 transitively included sources, the compiler identities and effective fixed
 flags, a digest of the modules that decide artifact bytes
