@@ -1,6 +1,6 @@
 name: CI compile parallelism probe
 
-# Temporary cold-compile benchmark. No device allocation or cache upload.
+# Temporary compile-only benchmark. No device allocation or cache upload.
 on:
   pull_request:
     branches: [main]
@@ -25,35 +25,16 @@ jobs:
           system-site-packages: "true"
           source-cann: "true"
 
-      - name: Show available CPU and memory
-        run: |
-          nproc
-          free -h
-          if test -r /sys/fs/cgroup/cpu.max; then cat /sys/fs/cgroup/cpu.max; fi
-          if test -r /sys/fs/cgroup/memory.max; then cat /sys/fs/cgroup/memory.max; fi
-
-      - name: Clear local kernel cache for cold benchmark
-        run: rm -rf -- build/cache/kernels
-
       - name: Compile full a2a3 scene-test corpus with 64 workers
         run: |
           source /usr/local/Ascend/cann/set_env.sh
-          TIMEFORMAT='ST wall=%R seconds'
-          time \\
-            .venv/bin/python -m simpler_setup.tools.scene_test_compile examples tests/st \\
-              --platform a2a3 --exclude-level 4 --require-pto-isa --compile-workers 64 -q \\
-              --manual include
+          .venv/bin/python -m simpler_setup.tools.scene_test_compile examples tests/st --platform a2a3 --exclude-level 4 --require-pto-isa --compile-workers 64 -q --manual include
 
       - name: Compile DeepSeek standalone kernels with 64 workers
         run: |
           source /usr/local/Ascend/cann/set_env.sh
-          runtimes=$(.venv/bin/python -c \\
-            "from simpler_setup.platform_info import discover_runtimes; print(' '.join(discover_runtimes('a2a3')))")
+          runtimes=$(.venv/bin/python -c "from simpler_setup.platform_info import discover_runtimes; print(' '.join(discover_runtimes('a2a3')))")
           test -n "$runtimes"
           for runtime in $runtimes; do
-            echo "Compiling DeepSeek runtime: $runtime"
-            TIMEFORMAT="DeepSeek $runtime wall=%R seconds"
-            time \\
-              .venv/bin/python "examples/a2a3/$runtime/deepseek_v4_flash_decode/main.py" \\
-                --platform a2a3 --compile-only --compile-workers 64
+            .venv/bin/python "examples/a2a3/$runtime/deepseek_v4_flash_decode/main.py" --platform a2a3 --compile-only --compile-workers 64
           done
