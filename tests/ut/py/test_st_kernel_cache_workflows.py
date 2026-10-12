@@ -65,10 +65,7 @@ def test_kernel_cache_is_saved_after_compile_and_before_device_test(
         assert restore_keys[0].startswith("scene-kernels-a2a3-ds-")
         assert restore_keys[1].startswith("scene-kernels-a2a3-ds-")
         assert restore_keys[2].startswith("scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-")
-        assert "-manual-include-cases-v1-" in restore_keys[2]
-        assert "-inputs-v1-" in restore_keys[2]
-        assert "!examples/a5/**" in restore_keys[2]
-        assert "!tests/st/a5/**" in restore_keys[2]
+        assert restore_keys[2].endswith("-manual-include-cases-v1-")
         assert "src/a2a3/**" in key
         assert "cache-matched-key == ''" in save["if"]
         assert "startsWith(" in save["if"]

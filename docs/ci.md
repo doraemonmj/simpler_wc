@@ -396,11 +396,11 @@ keys inside the archive include each artifact's actual source/include closure
 and compiler inputs, so an unrelated source change still reuses every artifact
 while a relevant dependency change recompiles only the affected artifacts.
 The DeepSeek-only job first restores its small private cache. On a miss it can
-read the exact `manual-include` full a2a3 cache produced by Daily on the default
-branch, allowing unrelated PRs with unchanged cases to share the compiled
-kernels without accidentally selecting a narrower per-PR `manual-exclude`
-archive. That full archive is not copied back into each PR's DeepSeek cache
-family.
+read the newest `manual-include` full a2a3 cache produced by Daily on the
+default branch, even when case or compilation-input hashes differ. The inner
+content keys recompile affected kernels, while the `manual-include` prefix
+avoids selecting a narrower per-PR `manual-exclude` archive. That full archive
+is not copied back into each PR's DeepSeek cache family.
 The callable key covers the contents of its orchestration, incore, and
 transitively included sources, the compiler identities and effective fixed
 flags, a digest of the modules that decide artifact bytes

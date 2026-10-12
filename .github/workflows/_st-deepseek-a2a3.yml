@@ -37,9 +37,9 @@ jobs:
       # uses --manual exclude and never builds these kernels, while this job
       # compiles only the two DS directories. Sharing the main key would let
       # this partial compilation win the immutable-cache save race and starve
-      # the main sweep's cache. An exact manual-include full-sweep key is still
-      # a safe read-only fallback: Daily creates it on the default branch,
-      # which lets otherwise unrelated PRs reuse the same unchanged DS kernels.
+      # the main sweep's cache. The manual-include full-sweep cache is a safe
+      # read-only fallback: Daily creates it on the default branch, and the
+      # inner content keys reject stale kernels when cases or inputs change.
       - name: Restore scene-test kernel cache (a2a3)
         id: deepseek-kernel-cache
         uses: actions/cache/restore@v5
@@ -49,7 +49,7 @@ jobs:
           restore-keys: |
             scene-kernels-a2a3-ds-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-cases-v1-${{ hashFiles('examples/a2a3/host_build_graph/deepseek_v4_flash_decode/**', 'examples/a2a3/tensormap_and_ringbuffer/deepseek_v4_flash_decode/**') }}-
             scene-kernels-a2a3-ds-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-
-            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-include-cases-v1-${{ hashFiles('examples/**', '!examples/a5/**', 'tests/st/**', '!tests/st/a5/**') }}-inputs-v1-${{ hashFiles('src/common/**', 'src/a2a3/**', 'python/**', 'simpler_setup/**') }}
+            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-include-cases-v1-
 
       - name: Set up environment
         uses: ./.github/actions/setup-venv

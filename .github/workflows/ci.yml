@@ -1,156 +1,103 @@
-name: CI
+name: CI cache restore probe
 
-permissions:
-  contents: read
-  pull-requests: read
-
+# Temporary, compile-only check of the full-sweep-to-DeepSeek fallback. Remove
+# this workflow after recording the cache match and compilation results.
 on:
   pull_request:
     branches: [main]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
-  detect-changes:
-    uses: ./.github/workflows/_detect-changes.yml
-    with:
-      repository: ${{ github.event.pull_request.head.repo.full_name }}
-      ref: ${{ github.event.pull_request.head.sha }}
-      base_repository: ${{ github.event.pull_request.base.repo.full_name }}
-      base_ref: ${{ github.event.pull_request.base.ref }}
-      base_sha: ${{ github.event.pull_request.base.sha }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
-      runs_on: '["ubuntu-latest"]'
+  seed:
+    runs-on: [self-hosted, a2a3]
+    timeout-minutes: 45
+    outputs:
+      key: ${{ steps.seed-key.outputs.key }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
-  pre-commit:
-    uses: ./.github/workflows/_pre-commit.yml
-    with:
-      base_sha: ${{ github.event.pull_request.base.sha }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
-      runs_on: '["ubuntu-latest"]'
-      setup_variant: github
+      - uses: ./.github/actions/setup-venv
+        with:
+          build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
+          packages: "--no-build-isolation --config-settings=build.targets=build_package_a2a3 .[test]"
+          install-torch: "false"
+          system-site-packages: "true"
+          source-cann: "true"
 
-  packaging-matrix:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.examples_only != 'true' && needs.detect-changes.outputs.tests_only != 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_packaging.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      python_version: ${{ matrix.python-version }}
+      - name: Compile full a2a3 scene-test corpus, including DeepSeek
+        run: |
+          source /usr/local/Ascend/cann/set_env.sh
+          .venv/bin/python -m simpler_setup.tools.scene_test_compile examples tests/st \
+            --platform a2a3 --exclude-level 4 --require-pto-isa --compile-workers 8 -q \
+            --manual include
 
-  ut:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_ut-no-hardware.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      python_version: ${{ matrix.python-version }}
+      - name: Set unique full-sweep cache key
+        id: seed-key
+        run: echo "key=scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-include-cases-v1-probe-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
 
-  st-sim-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_st-sim-a2a3.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      include_dfx_smokes: true
-      python_version: ${{ matrix.python-version }}
+      - name: Save full-sweep cache
+        uses: actions/cache/save@v5
+        with:
+          path: build/cache/kernels
+          key: ${{ steps.seed-key.outputs.key }}
 
-  st-sim-a5:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a5_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_st-sim-a5.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      include_dfx_smokes: true
-      python_version: ${{ matrix.python-version }}
+  deepseek:
+    needs: seed
+    runs-on: [self-hosted, a2a3]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
-  profiling-flags-smoke:
-    needs: [detect-changes, pre-commit]
-    if: (needs.detect-changes.outputs.a2a3_changed == 'true' || needs.detect-changes.outputs.a5_changed == 'true') && needs.detect-changes.outputs.examples_only != 'true' && needs.detect-changes.outputs.tests_only != 'true'
-    uses: ./.github/workflows/_profiling-flags-smoke.yml
-    with:
-      runs_on: '["ubuntu-latest"]'
-      setup_variant: github
+      - name: Restore through the production full-sweep fallback prefix
+        id: restore
+        uses: actions/cache/restore@v5
+        with:
+          path: build/cache/kernels
+          key: scene-kernels-a2a3-ds-probe-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-include-cases-v1-
 
-  ut-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
-    uses: ./.github/workflows/_ut-npu-a2a3.yml
-    with:
-      runs_on: '["self-hosted","a2a3"]'
-      include_cann_examples: true
+      - name: Verify full-sweep archive was restored
+        env:
+          MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
+          EXPECTED_KEY: ${{ needs.seed.outputs.key }}
+          CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
+        run: |
+          test "$MATCHED_KEY" = "$EXPECTED_KEY"
+          test "$CACHE_HIT" != true
 
-  st-onboard-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-npu-a2a3.yml
-    with:
-      runs_on: '["self-hosted","a2a3"]'
-      include_dfx_smokes: true
+      - uses: ./.github/actions/setup-venv
+        with:
+          build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
+          packages: "--no-build-isolation --config-settings=build.targets=build_package_a2a3 .[test]"
+          install-torch: "false"
+          system-site-packages: "true"
+          source-cann: "true"
 
-  # The only job that spans two machines. It is arch-specific and the most
-  # expensive thing in this file, so it gates exactly as st-onboard-a2a3 does —
-  # never on a weaker signal than a cheaper job, per
-  # .claude/rules/ci-change-detection.md.
-  st-network1-onboard-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-network1.yml
-    with:
-      platform: a2a3
-      # a2a3pod is a label on the runner machines, not a value this repo
-      # controls, so it keeps the older word until those machines are
-      # relabelled. A job matches every label in this list, so it cannot accept
-      # either spelling.
-      runs_on: '["self-hosted","Linux","ARM64","a2a3pod"]'
-
-  # The two DeepSeek smoke cases stay manual, so the main sweep (--manual
-  # exclude) never picks them up; this job selects them with --manual only and
-  # runs on its own devices in parallel with st-onboard-a2a3, keeping their
-  # ~9 min of device time off the main sweep's critical path. Gates exactly as
-  # st-onboard-a2a3 does, per .claude/rules/ci-change-detection.md.
-  st-deepseek-onboard-a2a3:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-deepseek-a2a3.yml
-    with:
-      runs_on: '["self-hosted","a2a3"]'
-
-  ut-a5:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
-    uses: ./.github/workflows/_ut-npu-a5.yml
-    with:
-      runs_on: '["self-hosted","a5"]'
-      include_cann_examples: true
-
-  st-onboard-a5:
-    needs: [detect-changes, pre-commit]
-    if: needs.detect-changes.outputs.a5_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
-    uses: ./.github/workflows/_st-npu-a5.yml
-    with:
-      runs_on: '["self-hosted","a5"]'
-      include_dfx_smokes: true
+      - name: Verify both DeepSeek callables reuse the restored cache
+        run: |
+          set -o pipefail
+          source /usr/local/Ascend/cann/set_env.sh
+          log_file="$RUNNER_TEMP/deepseek-cache-probe.log"
+          runtimes=$(.venv/bin/python -c \
+            "from simpler_setup.platform_info import discover_runtimes; print(' '.join(discover_runtimes('a2a3')))")
+          test -n "$runtimes"
+          for runtime in $runtimes; do
+            .venv/bin/python -c \
+              'import logging, runpy, sys; logging.getLogger("simpler_setup.scene_test_cache").setLevel(logging.INFO); sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name="__main__")' \
+              "examples/a2a3/$runtime/deepseek_v4_flash_decode/main.py" \
+              --platform a2a3 --compile-only --compile-workers 8 --log-level info \
+              2>&1 | tee -a "$log_file"
+          done
+          hits=$(grep -c '\[SceneTestCache\] hit:' "$log_file" || true)
+          test "$hits" -ge 2
+          if grep -Eq '\[SceneTestCache\] (miss|incore miss)' "$log_file"; then
+            echo "::error::DeepSeek recompiled after restoring the full-sweep archive"
+            exit 1
+          fi
