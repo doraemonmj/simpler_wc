@@ -18,6 +18,7 @@
 
 #include "scheduler.h"
 #include <inttypes.h>
+#include <cstdio>
 #include <stdlib.h>
 #include "common/unified_log.h"
 
@@ -71,7 +72,7 @@ SchedProfilingData scheduler_get_profiling(int thread_idx) {
 // Async wait diagnostics
 // =============================================================================
 
-void AsyncWaitList::log_diagnostics(AICoreCompletionMailbox *aicore_mailbox, const char *reason, bool warn_details) {
+void AsyncWaitList::log_diagnostics(AICoreCompletionMailbox *aicore_mailbox, const char *reason) {
     struct PendingDetail {
         uint64_t task_id;
         uint64_t addr;
@@ -254,55 +255,21 @@ void AsyncWaitList::log_diagnostics(AICoreCompletionMailbox *aicore_mailbox, con
 
     for (int32_t i = 0; i < detail_count; i++) {
         const PendingDetail &detail = details[i];
+        char observed[32];
         if (detail.observed_available) {
-            if (warn_details) {
-                LOG_WARN(
-                    "[ASYNC_WAIT reason=%s entry=%d cond=%d] task_token=%llu normal_done=%u waiting=%d conditions=%d "
-                    "engine=%s type=%d addr=0x%llx cookie=0x%llx expected=%u observed=%u retired=%u",
-                    reason, detail.entry_idx, detail.condition_idx, static_cast<unsigned long long>(detail.task_id),
-                    static_cast<unsigned>(detail.normal_done), detail.waiting_completion_count, detail.condition_count,
-                    async_engine_name(detail.engine), detail.completion_type,
-                    static_cast<unsigned long long>(detail.addr),
-                    static_cast<unsigned long long>(detail.backend_cookie), detail.expected_value,
-                    detail.observed_value, static_cast<unsigned>(detail.retired)
-                );
-            } else {
-                LOG_INFO(
-                    "[ASYNC_WAIT reason=%s entry=%d cond=%d] task_token=%llu normal_done=%u waiting=%d conditions=%d "
-                    "engine=%s type=%d addr=0x%llx cookie=0x%llx expected=%u observed=%u retired=%u",
-                    reason, detail.entry_idx, detail.condition_idx, static_cast<unsigned long long>(detail.task_id),
-                    static_cast<unsigned>(detail.normal_done), detail.waiting_completion_count, detail.condition_count,
-                    async_engine_name(detail.engine), detail.completion_type,
-                    static_cast<unsigned long long>(detail.addr),
-                    static_cast<unsigned long long>(detail.backend_cookie), detail.expected_value,
-                    detail.observed_value, static_cast<unsigned>(detail.retired)
-                );
-            }
+            snprintf(observed, sizeof(observed), "%u", detail.observed_value);
         } else {
-            if (warn_details) {
-                LOG_WARN(
-                    "[ASYNC_WAIT reason=%s entry=%d cond=%d] task_token=%llu normal_done=%u waiting=%d conditions=%d "
-                    "engine=%s type=%d addr=0x%llx cookie=0x%llx expected=%u observed=unavailable retired=%u",
-                    reason, detail.entry_idx, detail.condition_idx, static_cast<unsigned long long>(detail.task_id),
-                    static_cast<unsigned>(detail.normal_done), detail.waiting_completion_count, detail.condition_count,
-                    detail.condition_idx >= 0 ? async_engine_name(detail.engine) : "none", detail.completion_type,
-                    static_cast<unsigned long long>(detail.addr),
-                    static_cast<unsigned long long>(detail.backend_cookie), detail.expected_value,
-                    static_cast<unsigned>(detail.retired)
-                );
-            } else {
-                LOG_INFO(
-                    "[ASYNC_WAIT reason=%s entry=%d cond=%d] task_token=%llu normal_done=%u waiting=%d conditions=%d "
-                    "engine=%s type=%d addr=0x%llx cookie=0x%llx expected=%u observed=unavailable retired=%u",
-                    reason, detail.entry_idx, detail.condition_idx, static_cast<unsigned long long>(detail.task_id),
-                    static_cast<unsigned>(detail.normal_done), detail.waiting_completion_count, detail.condition_count,
-                    detail.condition_idx >= 0 ? async_engine_name(detail.engine) : "none", detail.completion_type,
-                    static_cast<unsigned long long>(detail.addr),
-                    static_cast<unsigned long long>(detail.backend_cookie), detail.expected_value,
-                    static_cast<unsigned>(detail.retired)
-                );
-            }
+            snprintf(observed, sizeof(observed), "unavailable");
         }
+        LOG_WARN(
+            "[ASYNC_WAIT reason=%s entry=%d cond=%d] task_token=%llu normal_done=%u waiting=%d conditions=%d "
+            "engine=%s type=%d addr=0x%llx cookie=0x%llx expected=%u observed=%s retired=%u",
+            reason, detail.entry_idx, detail.condition_idx, static_cast<unsigned long long>(detail.task_id),
+            static_cast<unsigned>(detail.normal_done), detail.waiting_completion_count, detail.condition_count,
+            detail.condition_idx >= 0 ? async_engine_name(detail.engine) : "none", detail.completion_type,
+            static_cast<unsigned long long>(detail.addr), static_cast<unsigned long long>(detail.backend_cookie),
+            detail.expected_value, observed, static_cast<unsigned>(detail.retired)
+        );
     }
 }
 

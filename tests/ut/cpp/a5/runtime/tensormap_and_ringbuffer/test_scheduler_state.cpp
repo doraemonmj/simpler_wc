@@ -26,37 +26,6 @@
 #include "scheduler/scheduler_types.h"
 #include "scheduler/scheduler.h"
 
-TEST(StallWarningEpisodeTest, ClaimsOnceAndRearmsAfterProgress) {
-    StallWarningEpisode episode;
-    episode.reset();
-
-    uint64_t first = episode.generation();
-    EXPECT_TRUE(episode.try_claim(first));
-    EXPECT_FALSE(episode.try_claim(first));
-
-    uint64_t second = episode.note_progress();
-    EXPECT_GT(second, first);
-    EXPECT_FALSE(episode.try_claim(first));
-    EXPECT_TRUE(episode.try_claim(second));
-    EXPECT_FALSE(episode.try_claim(second));
-}
-
-TEST(StallWarningEpisodeTest, ConcurrentClaimHasOneWinner) {
-    StallWarningEpisode episode;
-    episode.reset();
-    uint64_t generation = episode.generation();
-    std::atomic<int32_t> winners{0};
-    std::thread threads[8];
-    for (auto &thread : threads) {
-        thread = std::thread([&]() {
-            if (episode.try_claim(generation)) winners.fetch_add(1, std::memory_order_relaxed);
-        });
-    }
-    for (auto &thread : threads)
-        thread.join();
-    EXPECT_EQ(winners.load(std::memory_order_relaxed), 1);
-}
-
 TEST(AsyncWaitDiagnosticsTest, SeparatesTaskBodyAndCompletionPendingAndGuardsMailboxUnderflow) {
     auto wait_list = std::make_unique<AsyncWaitList>();
     auto mailbox = std::make_unique<AICoreCompletionMailbox>();

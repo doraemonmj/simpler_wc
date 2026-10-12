@@ -152,19 +152,9 @@ LoopAction SchedulerContext::check_idle_fatal_error(
 // Prefix on every line:
 //   [STALL thread=N idle_iterations=K] CATEGORY ...
 //
-// A complete snapshot is emitted only by the thread that wins the wall-clock
-// warning or shutdown latch. grep "idle_iterations=N" groups its lines.
-//
-// Categories (and which thread emits them):
-//   SUMMARY  — completed / total counts and scan totals               (thread 0 only)
-//   TASK     — one per non-completed task scanned from shared rings   (thread 0 only)
-//              - state=RUNNING: includes running_on=[...] cross-ref
-//              - state=READY:   fanin satisfied but no idle core yet
-//              - state=WAIT:    includes missing_deps=N
-//   CLUSTER  — one per cluster owned by this thread                   (every thread)
-//              - busy slot shows kernel + task_id + cond_reg_state;
-//                ANOMALY suffix when COND register is fin while software
-//                still has the slot marked busy.
+// Local half-timeout reports contain only the caller's CLUSTER state at INFO.
+// The shutdown winner emits global SUMMARY/TASK, every thread's CLUSTER,
+// and AsyncWait diagnostics at WARN.
 //
 // Reader workflow:
 //   1. grep SUMMARY                          -> overall completion status
@@ -259,95 +249,92 @@ bool SchedulerContext::no_thread_owns_running_task() const {
         }                                            \
     } while (0)
 
-void SchedulerContext::log_stall_diagnostics(
-    int32_t thread_idx, int32_t task_count, int32_t idle_iterations, int32_t last_progress_count, StallDumpReport report
+void SchedulerContext::log_global_stall_diagnostics(
+    int32_t trigger_thread_idx, int32_t idle_iterations, int32_t last_progress_count
 ) {
-    CoreTracker &tracker = core_trackers_[thread_idx];
-
-    // T0 owns the shared-ring scan; printing it from other threads would
-    // produce identical TASK lines once per scheduler thread.
-    if (thread_idx == 0) {
-        int32_t cnt_ready = 0, cnt_waiting = 0, cnt_running = 0, submitted_in_ring = 0;
-        for (int r = 0; r < CHIP_MAX_RING_DEPTH; r++) {
-            SharedMemoryRingHeader &ring = *sched_->ring_sched_states[r].ring;
-            int32_t ring_task_count = ring.fc.current_task_index.load(std::memory_order_relaxed);
-            submitted_in_ring += ring_task_count;
-            // Scan only live task_ids [last_task_alive, current_task_index): slots
-            // wrap (slot = task_id % window), so starting at 0 re-reads each live
-            // slot once per earlier task_id and inflates the scan_* counts.
-            int32_t ring_task_start = ring.fc.last_task_alive.load(std::memory_order_relaxed);
-            for (int32_t si = ring_task_start; si < ring_task_count; si++) {
-                ChipTaskSlotState &slot_state = ring.get_slot_state_by_task_id(si);
-                ChipTaskState st = slot_state.task_state.load(std::memory_order_relaxed);
-                int32_t rc = slot_state.fanin_refcount.load(std::memory_order_relaxed);
-                int32_t fi = slot_state.fanin_count;
-                int32_t kid_aic = slot_state.task->kernel_id[0];
-                int32_t kid_aiv0 = slot_state.task->kernel_id[1];
-                int32_t kid_aiv1 = slot_state.task->kernel_id[2];
-                uint64_t task_id = TaskId::to_uint64(slot_state.task->task_id);
-                if (st >= CHIP_TASK_COMPLETED) continue;
-                // task_state has no intermediate ready/running value — it
-                // stays PENDING until the worker stores COMPLETED. Classify
-                // by the ground truth instead: a slot is RUNNING iff some
-                // core has it as running_slot_state. A task occupies at most
-                // 3 cores (one cluster), all under the same owner thread by
-                // construction of assign_cores_to_threads.
-                char running_on[192] = {0};
-                int32_t owner = -1;
-                int32_t pos = 0;
-                bool is_running = false;
-                for (int32_t cid = 0; cid < cores_total_num_ && pos + 32 < (int32_t)sizeof(running_on); cid++) {
-                    if (core_exec_states_[cid].running_slot_state != &slot_state) continue;
-                    is_running = true;
-                    if (owner < 0) owner = find_core_owner_thread(cid);
-                    const char *sname = subslot_name(core_exec_states_[cid].running_subslot);
-                    int32_t written = snprintf(
-                        running_on + pos, sizeof(running_on) - pos, "%score=%d(%s)", pos == 0 ? "" : " ", cid, sname
-                    );
-                    if (written > 0) pos += written;
-                }
-
-                if (is_running) {
-                    cnt_running++;
-                    if (cnt_running > STALL_DUMP_READY_MAX) continue;
-                    STALL_DUMP_LOG(
-                        report,
-                        "[STALL thread=%d idle_iterations=%d] TASK ring=%d task_id=0x%" PRIx64
-                        " state=RUNNING fanin_refcount=%d/%d kernels=[aic:%d aiv0:%d aiv1:%d] "
-                        "running_on=[owner_thread=%d cores=[%s]]",
-                        thread_idx, idle_iterations, r, task_id, rc, fi, kid_aic, kid_aiv0, kid_aiv1, owner, running_on
-                    );
-                    continue;
-                }
-                if (rc >= fi) {
-                    cnt_ready++;
-                    if (cnt_ready > STALL_DUMP_READY_MAX) continue;
-                    STALL_DUMP_LOG(
-                        report,
-                        "[STALL thread=%d idle_iterations=%d] TASK ring=%d task_id=0x%" PRIx64
-                        " state=READY   fanin_refcount=%d/%d kernels=[aic:%d aiv0:%d aiv1:%d]",
-                        thread_idx, idle_iterations, r, task_id, rc, fi, kid_aic, kid_aiv0, kid_aiv1
-                    );
-                    continue;
-                }
-                cnt_waiting++;
-                if (cnt_waiting > STALL_DUMP_WAIT_MAX) continue;
-                STALL_DUMP_LOG(
-                    report,
-                    "[STALL thread=%d idle_iterations=%d] TASK ring=%d task_id=0x%" PRIx64
-                    " state=WAIT    fanin_refcount=%d/%d kernels=[aic:%d aiv0:%d aiv1:%d] missing_deps=%d",
-                    thread_idx, idle_iterations, r, task_id, rc, fi, kid_aic, kid_aiv0, kid_aiv1, fi - rc
+    int32_t cnt_ready = 0, cnt_waiting = 0, cnt_running = 0, submitted_in_ring = 0;
+    for (int r = 0; r < CHIP_MAX_RING_DEPTH; r++) {
+        SharedMemoryRingHeader &ring = *sched_->ring_sched_states[r].ring;
+        int32_t ring_task_count = ring.fc.current_task_index.load(std::memory_order_relaxed);
+        submitted_in_ring += ring_task_count;
+        // Scan only live task_ids [last_task_alive, current_task_index): slots
+        // wrap (slot = task_id % window), so starting at 0 re-reads each live
+        // slot once per earlier task_id and inflates the scan_* counts.
+        int32_t ring_task_start = ring.fc.last_task_alive.load(std::memory_order_relaxed);
+        for (int32_t si = ring_task_start; si < ring_task_count; si++) {
+            ChipTaskSlotState &slot_state = ring.get_slot_state_by_task_id(si);
+            ChipTaskState st = slot_state.task_state.load(std::memory_order_relaxed);
+            int32_t rc = slot_state.fanin_refcount.load(std::memory_order_relaxed);
+            int32_t fi = slot_state.fanin_count;
+            int32_t kid_aic = slot_state.task->kernel_id[0];
+            int32_t kid_aiv0 = slot_state.task->kernel_id[1];
+            int32_t kid_aiv1 = slot_state.task->kernel_id[2];
+            uint64_t task_id = TaskId::to_uint64(slot_state.task->task_id);
+            if (st >= CHIP_TASK_COMPLETED) continue;
+            // task_state has no intermediate ready/running value — it
+            // stays PENDING until the worker stores COMPLETED. Classify
+            // by the ground truth instead: a slot is RUNNING iff some
+            // core has it as running_slot_state. A task occupies at most
+            // 3 cores (one cluster), all under the same owner thread by
+            // construction of assign_cores_to_threads.
+            char running_on[192] = {0};
+            int32_t owner = -1;
+            int32_t pos = 0;
+            bool is_running = false;
+            for (int32_t cid = 0; cid < cores_total_num_ && pos + 32 < (int32_t)sizeof(running_on); cid++) {
+                if (core_exec_states_[cid].running_slot_state != &slot_state) continue;
+                is_running = true;
+                if (owner < 0) owner = find_core_owner_thread(cid);
+                const char *sname = subslot_name(core_exec_states_[cid].running_subslot);
+                int32_t written = snprintf(
+                    running_on + pos, sizeof(running_on) - pos, "%score=%d(%s)", pos == 0 ? "" : " ", cid, sname
                 );
+                if (written > 0) pos += written;
             }
+
+            if (is_running) {
+                cnt_running++;
+                if (cnt_running > STALL_DUMP_READY_MAX) continue;
+                LOG_WARN(
+                    "[STALL thread=%d idle_iterations=%d] TASK ring=%d task_id=0x%" PRIx64
+                    " state=RUNNING fanin_refcount=%d/%d kernels=[aic:%d aiv0:%d aiv1:%d] "
+                    "running_on=[owner_thread=%d cores=[%s]]",
+                    trigger_thread_idx, idle_iterations, r, task_id, rc, fi, kid_aic, kid_aiv0, kid_aiv1, owner,
+                    running_on
+                );
+                continue;
+            }
+            if (rc >= fi) {
+                cnt_ready++;
+                if (cnt_ready > STALL_DUMP_READY_MAX) continue;
+                LOG_WARN(
+                    "[STALL thread=%d idle_iterations=%d] TASK ring=%d task_id=0x%" PRIx64
+                    " state=READY   fanin_refcount=%d/%d kernels=[aic:%d aiv0:%d aiv1:%d]",
+                    trigger_thread_idx, idle_iterations, r, task_id, rc, fi, kid_aic, kid_aiv0, kid_aiv1
+                );
+                continue;
+            }
+            cnt_waiting++;
+            if (cnt_waiting > STALL_DUMP_WAIT_MAX) continue;
+            LOG_WARN(
+                "[STALL thread=%d idle_iterations=%d] TASK ring=%d task_id=0x%" PRIx64
+                " state=WAIT    fanin_refcount=%d/%d kernels=[aic:%d aiv0:%d aiv1:%d] missing_deps=%d",
+                trigger_thread_idx, idle_iterations, r, task_id, rc, fi, kid_aic, kid_aiv0, kid_aiv1, fi - rc
+            );
         }
-        int32_t effective_total = task_count > 0 ? task_count : submitted_in_ring;
-        int32_t c = completed_tasks_.load(std::memory_order_relaxed);
-        LOG_WARN(
-            "[STALL thread=%d idle_iterations=%d] SUMMARY completed=%d/%d last_progress_iteration=%d "
-            "scan_ready=%d scan_waiting=%d scan_running=%d",
-            thread_idx, idle_iterations, c, effective_total, last_progress_count, cnt_ready, cnt_waiting, cnt_running
-        );
     }
+    int32_t effective_total = total_tasks_ > 0 ? total_tasks_ : submitted_in_ring;
+    int32_t c = completed_tasks_.load(std::memory_order_relaxed);
+    LOG_WARN(
+        "[STALL thread=%d idle_iterations=%d] SUMMARY completed=%d/%d last_progress_iteration=%d "
+        "scan_ready=%d scan_waiting=%d scan_running=%d",
+        trigger_thread_idx, idle_iterations, c, effective_total, last_progress_count, cnt_ready, cnt_waiting,
+        cnt_running
+    );
+}
+
+void SchedulerContext::log_stall_diagnostics(int32_t thread_idx, int32_t idle_iterations, StallDumpReport report) {
+    CoreTracker &tracker = core_trackers_[thread_idx];
 
     // CLUSTER lines: one per cluster this thread owns.
     // cluster_id = local_cluster_idx * active_sched_threads_ + thread_idx, matching the
@@ -384,8 +371,7 @@ void SchedulerContext::log_stall_diagnostics(
 #undef STALL_DUMP_LOG
 
 void SchedulerContext::log_shutdown_stall_snapshot(
-    int32_t trigger_thread_idx, int32_t trigger_idle_iterations, int32_t trigger_last_progress_count,
-    const char *reason, StallDumpReport report
+    int32_t trigger_thread_idx, int32_t trigger_idle_iterations, int32_t trigger_last_progress_count, const char *reason
 ) {
     LOG_WARN(
         "[SHUTDOWN_SNAPSHOT trigger_thread=%d reason=%s idle_iterations=%d] "
@@ -408,12 +394,13 @@ void SchedulerContext::log_shutdown_stall_snapshot(
         );
         thread_count = thread_count < 0 ? 0 : MAX_AICPU_THREADS;
     }
+    log_global_stall_diagnostics(trigger_thread_idx, trigger_idle_iterations, trigger_last_progress_count);
     for (int32_t t = 0; t < thread_count; t++) {
-        log_stall_diagnostics(t, total_tasks_, trigger_idle_iterations, trigger_last_progress_count, report);
+        log_stall_diagnostics(t, trigger_idle_iterations, StallDumpReport::Shutdown);
     }
     if (sched_ != nullptr) {
         AICoreCompletionMailbox *mailbox = rt_ != nullptr ? rt_->aicore_mailbox : nullptr;
-        sched_->async_wait_list.log_diagnostics(mailbox, reason, report == StallDumpReport::Shutdown);
+        sched_->async_wait_list.log_diagnostics(mailbox, reason);
     }
 }
 
@@ -434,7 +421,7 @@ SchedulerContext::StallClassification SchedulerContext::classify_stall_reason() 
             ChipTaskSlotState &slot_state = ring.get_slot_state_by_task_id(si);
             ChipTaskState st = slot_state.task_state.load(std::memory_order_relaxed);
             if (st >= CHIP_TASK_COMPLETED) continue;
-            // Same ground truth as log_stall_diagnostics: task_state stays PENDING
+            // Same ground truth as log_global_stall_diagnostics: task_state stays PENDING
             // until COMPLETED, so RUNNING is read from core ownership, not the slot.
             int32_t run_core = -1;
             for (int32_t cid = 0; cid < cores_total_num_; cid++) {
@@ -1312,7 +1299,6 @@ int32_t SchedulerContext::pre_handshake_init(
     // released to dispatch.
     completed_tasks_.store(0, std::memory_order_release);
     orchestrator_done_.store(false, std::memory_order_release);
-    stall_warning_episode_.reset();
     func_id_to_addr_ = reinterpret_cast<uint64_t *>(runtime->dev.callable_table_addr_);
     func_id_to_addr_count_ = runtime->dev.callable_table_len_;
 

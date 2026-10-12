@@ -953,11 +953,7 @@ int32_t SchedulerContext::resolve_and_dispatch(Runtime *runtime, int32_t thread_
     // "now" so the first budget cycle starts when this thread does, not at
     // an undefined value.
     uint64_t last_progress_ts = get_sys_cnt_aicpu();
-    // The final timeout remains per-thread so progress on an unrelated core
-    // cannot mask a stuck owner. The early warning is global: all threads
-    // observe the shared generation and one CAS winner emits its snapshot.
-    uint64_t stall_warning_progress_ts = last_progress_ts;
-    uint64_t stall_warning_generation = stall_warning_episode_.generation();
+    bool stall_warning_reported = false;
     // Per-device override latched once at worker init by simpler_aicpu_init
     // (InitArgs.scheduler_timeout_ms -> resident-SO global). 0 means no
     // override; fall back to the compile-time SCHEDULER_TIMEOUT_CYCLES.
@@ -1297,10 +1293,8 @@ int32_t SchedulerContext::resolve_and_dispatch(Runtime *runtime, int32_t thread_
 
         if (made_progress) {
             idle_iterations = 0;
-            uint64_t progress_ts = get_sys_cnt_aicpu();
-            last_progress_ts = progress_ts;
-            stall_warning_progress_ts = progress_ts;
-            stall_warning_generation = stall_warning_episode_.note_progress();
+            last_progress_ts = get_sys_cnt_aicpu();
+            stall_warning_reported = false;
         } else {
 #if SIMPLER_DFX
             uint64_t release_t0 =
@@ -1336,10 +1330,8 @@ int32_t SchedulerContext::resolve_and_dispatch(Runtime *runtime, int32_t thread_
             advanced_reclaim = sched_->drain_pending_ring_advances() || advanced_reclaim;
             if (advanced_reclaim) {
                 idle_iterations = 0;
-                uint64_t progress_ts = get_sys_cnt_aicpu();
-                last_progress_ts = progress_ts;
-                stall_warning_progress_ts = progress_ts;
-                stall_warning_generation = stall_warning_episode_.note_progress();
+                last_progress_ts = get_sys_cnt_aicpu();
+                stall_warning_reported = false;
             } else {
                 idle_iterations++;
 
@@ -1349,27 +1341,11 @@ int32_t SchedulerContext::resolve_and_dispatch(Runtime *runtime, int32_t thread_
                     if (action == LoopAction::BREAK_LOOP) break;
                 }
 
-                // One clock read serves both wall-clock gates. A generation
-                // change means some scheduler thread made real progress, so
-                // restart only the global warning budget; the per-thread final
-                // timeout intentionally keeps its existing timestamp.
-                uint64_t now = get_sys_cnt_aicpu();
-                uint64_t current_generation = stall_warning_episode_.generation();
-                if (current_generation != stall_warning_generation) {
-                    stall_warning_generation = current_generation;
-                    stall_warning_progress_ts = now;
-                }
-                uint64_t idle_elapsed = now - last_progress_ts;
-                uint64_t warning_elapsed = now - stall_warning_progress_ts;
-                if (warning_elapsed > scheduler_timeout_cycles / 2 &&
-                    stall_warning_episode_.try_claim(stall_warning_generation)) {
-                    log_shutdown_stall_snapshot(
-                        thread_idx, idle_iterations, last_progress_count, "stall_warning", StallDumpReport::Periodic
-                    );
-                    // The diagnostic path may retry locks, invalidate cache
-                    // lines, and emit multiple records. Refresh elapsed time
-                    // so that its cost cannot defer the timeout gate to a
-                    // later scheduler iteration.
+                uint64_t idle_elapsed = get_sys_cnt_aicpu() - last_progress_ts;
+                if (!stall_warning_reported && idle_elapsed >= scheduler_timeout_cycles / 2) {
+                    stall_warning_reported = true;
+                    log_stall_diagnostics(thread_idx, idle_iterations, StallDumpReport::Periodic);
+                    // Diagnostic time belongs to this thread's timeout budget.
                     idle_elapsed = get_sys_cnt_aicpu() - last_progress_ts;
                 }
                 // Wall-clock budget gate, with two fatal-latch branches:

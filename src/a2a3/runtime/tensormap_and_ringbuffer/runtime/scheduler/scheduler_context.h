@@ -193,7 +193,6 @@ private:
     std::atomic<bool> orchestrator_done_{false};
     std::atomic<bool> completed_{false};
     std::atomic<bool> fatal_shutdown_started_{false};
-    StallWarningEpisode stall_warning_episode_;
     // READY publishes completed initialization, or an opened window on startup
     // failure. REQUESTED retains an exit request before that publication. Only
     // the operation adding the second bit owns the core's window and return gate.
@@ -514,14 +513,15 @@ private:
     __attribute__((noinline, cold)) LoopAction
     check_idle_fatal_error(int32_t thread_idx, SharedMemoryHeader *header, Runtime *runtime);
 
-    __attribute__((noinline, cold)) void log_stall_diagnostics(
-        int32_t thread_idx, int32_t task_count, int32_t idle_iterations, int32_t last_progress_count,
-        StallDumpReport report
-    );
+    __attribute__((noinline, cold)) void
+    log_stall_diagnostics(int32_t thread_idx, int32_t idle_iterations, StallDumpReport report);
+
+    __attribute__((noinline, cold)) void
+    log_global_stall_diagnostics(int32_t trigger_thread_idx, int32_t idle_iterations, int32_t last_progress_count);
 
     __attribute__((noinline, cold)) void log_shutdown_stall_snapshot(
         int32_t trigger_thread_idx, int32_t trigger_idle_iterations, int32_t trigger_last_progress_count,
-        const char *reason, StallDumpReport report = StallDumpReport::Shutdown
+        const char *reason
     );
 
     // Reverse lookup: given a global core_id, find which scheduler thread's
@@ -560,7 +560,7 @@ private:
         int32_t stuck_core;    // S1: core hosting it (-1 if none)
     };
 
-    // Scan the rings once (same ground truth as log_stall_diagnostics: a slot is
+    // Scan the rings once (same ground truth as log_global_stall_diagnostics: a slot is
     // RUNNING iff a core holds it as running_slot_state) and reduce to a
     // StallClassification. Pure reads — safe to call from any scheduler thread.
     __attribute__((noinline, cold)) StallClassification classify_stall_reason() const;

@@ -91,7 +91,7 @@ uint64_t read_reg(uint64_t, RegId) { return AICORE_IDLE_VALUE; }
 volatile uint32_t *get_reg_ptr(uint64_t address, RegId) { return &conditions.at(address - 1); }
 
 #ifdef PTO_ASYNC_WAIT_H
-void AsyncWaitList::log_diagnostics(AICoreCompletionMailbox *, const char *, bool) {}
+void AsyncWaitList::log_diagnostics(AICoreCompletionMailbox *, const char *) {}
 #endif
 
 void platform_init_aicore_regs(uint64_t address) {
