@@ -1,7 +1,6 @@
-name: CI cache restore probe
+name: CI compile parallelism probe
 
-# Temporary, compile-only check of the full-sweep-to-DeepSeek fallback. Remove
-# this workflow after recording the cache match and compilation results.
+# Temporary cold-compile benchmark. No device allocation or cache upload.
 on:
   pull_request:
     branches: [main]
@@ -10,11 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  seed:
+  compile:
     runs-on: [self-hosted, Linux, ARM64, a2a3]
-    timeout-minutes: 45
-    outputs:
-      key: ${{ steps.seed-key.outputs.key }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
         with:
@@ -28,87 +25,33 @@ jobs:
           system-site-packages: "true"
           source-cann: "true"
 
-      - name: Compile full a2a3 scene-test corpus, including DeepSeek
+      - name: Show available CPU and memory
+        run: |
+          nproc
+          free -h
+          if test -r /sys/fs/cgroup/cpu.max; then cat /sys/fs/cgroup/cpu.max; fi
+          if test -r /sys/fs/cgroup/memory.max; then cat /sys/fs/cgroup/memory.max; fi
+
+      - name: Clear local kernel cache for cold benchmark
+        run: rm -rf -- build/cache/kernels
+
+      - name: Compile full a2a3 scene-test corpus with 64 workers
         run: |
           source /usr/local/Ascend/cann/set_env.sh
-          .venv/bin/python -m simpler_setup.tools.scene_test_compile examples tests/st \
-            --platform a2a3 --exclude-level 4 --require-pto-isa --compile-workers 8 -q \
-            --manual include
+          /usr/bin/time -f 'ST wall=%e seconds; peak_rss=%M KiB' \\
+            .venv/bin/python -m simpler_setup.tools.scene_test_compile examples tests/st \\
+              --platform a2a3 --exclude-level 4 --require-pto-isa --compile-workers 64 -q \\
+              --manual include
 
-      - name: Compile DeepSeek standalone kernels (a2a3)
+      - name: Compile DeepSeek standalone kernels with 64 workers
         run: |
           source /usr/local/Ascend/cann/set_env.sh
-          runtimes=$(.venv/bin/python -c \
-              "from simpler_setup.platform_info import discover_runtimes; print(' '.join(discover_runtimes('a2a3')))")
-          test -n "$runtimes"
-          for runtime in $runtimes; do
-            .venv/bin/python "examples/a2a3/$runtime/deepseek_v4_flash_decode/main.py" \
-              --platform a2a3 --compile-only --compile-workers 8
-          done
-
-      - name: Set unique full-sweep cache key
-        id: seed-key
-        run: echo "key=scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-include-cases-v1-probe-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
-
-      - name: Save full-sweep cache
-        uses: actions/cache/save@v5
-        with:
-          path: build/cache/kernels
-          key: ${{ steps.seed-key.outputs.key }}
-
-  deepseek:
-    needs: seed
-    runs-on: [self-hosted, Linux, ARM64, a2a3]
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-
-      - name: Restore through the production full-sweep fallback prefix
-        id: restore
-        uses: actions/cache/restore@v5
-        with:
-          path: build/cache/kernels
-          key: scene-kernels-a2a3-ds-probe-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-include-cases-v1-
-
-      - name: Verify full-sweep archive was restored
-        env:
-          MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
-          EXPECTED_KEY: ${{ needs.seed.outputs.key }}
-          CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
-        run: |
-          test "$MATCHED_KEY" = "$EXPECTED_KEY"
-          test "$CACHE_HIT" != true
-
-      - uses: ./.github/actions/setup-venv
-        with:
-          build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
-          packages: "--no-build-isolation --config-settings=build.targets=build_package_a2a3 .[test]"
-          install-torch: "false"
-          system-site-packages: "true"
-          source-cann: "true"
-
-      - name: Verify both DeepSeek callables reuse the restored cache
-        run: |
-          set -o pipefail
-          source /usr/local/Ascend/cann/set_env.sh
-          log_file="$RUNNER_TEMP/deepseek-cache-probe.log"
-          runtimes=$(.venv/bin/python -c \
+          runtimes=$(.venv/bin/python -c \\
             "from simpler_setup.platform_info import discover_runtimes; print(' '.join(discover_runtimes('a2a3')))")
           test -n "$runtimes"
           for runtime in $runtimes; do
-            .venv/bin/python -c \
-              'import logging, runpy, sys; logging.getLogger("simpler_setup.scene_test_cache").setLevel(logging.INFO); sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name="__main__")' \
-              "examples/a2a3/$runtime/deepseek_v4_flash_decode/main.py" \
-              --platform a2a3 --compile-only --compile-workers 8 --log-level info \
-              2>&1 | tee -a "$log_file"
+            echo "Compiling DeepSeek runtime: $runtime"
+            /usr/bin/time -f "DeepSeek $runtime wall=%e seconds; peak_rss=%M KiB" \\
+              .venv/bin/python "examples/a2a3/$runtime/deepseek_v4_flash_decode/main.py" \\
+                --platform a2a3 --compile-only --compile-workers 64
           done
-          hits=$(grep -c '\[SceneTestCache\] hit:' "$log_file" || true)
-          test "$hits" -ge 2
-          if grep -Eq '\[SceneTestCache\] (miss|incore miss)' "$log_file"; then
-            echo "::error::DeepSeek recompiled after restoring the full-sweep archive"
-            exit 1
-          fi
