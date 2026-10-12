@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-compile-parallelism-probe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   compile:
     runs-on: [self-hosted, Linux, ARM64, a2a3]
@@ -21,7 +25,7 @@ jobs:
         with:
           build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
           packages: "--no-build-isolation --config-settings=build.targets=build_package_a2a3 .[test]"
-          install-torch: "false"
+          install-torch: "true"
           system-site-packages: "true"
           source-cann: "true"
 
