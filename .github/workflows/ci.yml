@@ -1,7 +1,7 @@
 name: CI cache restore probe
 
-# Temporary, compile-only check using the full-sweep cache saved by the
-# preceding run on this PR. Remove this workflow after recording the result.
+# Temporary, compile-only check of the full-sweep-to-DeepSeek fallback. Remove
+# this workflow after recording the cache match and compilation results.
 on:
   pull_request:
     branches: [main]
@@ -10,7 +10,54 @@ permissions:
   contents: read
 
 jobs:
+  seed:
+    runs-on: [self-hosted, Linux, ARM64, a2a3]
+    timeout-minutes: 45
+    outputs:
+      key: ${{ steps.seed-key.outputs.key }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-venv
+        with:
+          build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
+          packages: "--no-build-isolation --config-settings=build.targets=build_package_a2a3 .[test]"
+          install-torch: "false"
+          system-site-packages: "true"
+          source-cann: "true"
+
+      - name: Compile full a2a3 scene-test corpus, including DeepSeek
+        run: |
+          source /usr/local/Ascend/cann/set_env.sh
+          .venv/bin/python -m simpler_setup.tools.scene_test_compile examples tests/st \
+            --platform a2a3 --exclude-level 4 --require-pto-isa --compile-workers 8 -q \
+            --manual include
+
+      - name: Compile DeepSeek standalone kernels (a2a3)
+        run: |
+          source /usr/local/Ascend/cann/set_env.sh
+          runtimes=$(.venv/bin/python -c \
+              "from simpler_setup.platform_info import discover_runtimes; print(' '.join(discover_runtimes('a2a3')))")
+          test -n "$runtimes"
+          for runtime in $runtimes; do
+            .venv/bin/python "examples/a2a3/$runtime/deepseek_v4_flash_decode/main.py" \
+              --platform a2a3 --compile-only --compile-workers 8
+          done
+
+      - name: Set unique full-sweep cache key
+        id: seed-key
+        run: echo "key=scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-include-cases-v1-probe-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: Save full-sweep cache
+        uses: actions/cache/save@v5
+        with:
+          path: build/cache/kernels
+          key: ${{ steps.seed-key.outputs.key }}
+
   deepseek:
+    needs: seed
     runs-on: [self-hosted, Linux, ARM64, a2a3]
     timeout-minutes: 30
     steps:
@@ -30,7 +77,7 @@ jobs:
       - name: Verify full-sweep archive was restored
         env:
           MATCHED_KEY: ${{ steps.restore.outputs.cache-matched-key }}
-          EXPECTED_KEY: scene-kernels-a2a3-Linux-ARM64-5bdfd1f5477e47b4f9708365c26a186f400cbc61779739b8644d87a3b2a7c880-manual-include-cases-v1-probe-38230788667-1
+          EXPECTED_KEY: ${{ needs.seed.outputs.key }}
           CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
         run: |
           test "$MATCHED_KEY" = "$EXPECTED_KEY"

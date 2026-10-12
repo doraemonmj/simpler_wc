@@ -40,7 +40,8 @@ jobs:
   st-onboard-a2a3:
     uses: ./.github/workflows/_st-npu-a2a3.yml
     with:
-      runs_on: '["self-hosted","a2a3"]'
+      # DeepSeek's PR job uses the same architecture so it can read this cache.
+      runs_on: '["self-hosted","Linux","ARM64","a2a3"]'
       include_dfx_smokes: true
       manual_mode: include
 

@@ -29,7 +29,7 @@ jobs:
   run:
     name: st-onboard-a2a3
     runs-on: ${{ fromJSON(inputs.runs_on) }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       MANUAL_MODE: ${{ inputs.manual_mode }}
       SIMPLER_SCHEDULER_TIMEOUT_MS: "2000"
@@ -53,16 +53,20 @@ jobs:
               ;;
           esac
 
+      - name: Fingerprint scene-test toolchain
+        id: scene-toolchain
+        uses: ./.github/actions/scene-kernel-toolchain
+
       - name: Restore scene-test kernel cache (a2a3)
         id: scene-kernel-cache
         uses: actions/cache/restore@v5
         with:
           path: build/cache/kernels
-          key: scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-${{ inputs.manual_mode }}-cases-v1-${{ hashFiles('examples/**', '!examples/a5/**', 'tests/st/**', '!tests/st/a5/**') }}-inputs-v1-${{ hashFiles('src/common/**', 'src/a2a3/**', 'python/**', 'simpler_setup/**') }}
+          key: scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-toolchain-v1-${{ steps.scene-toolchain.outputs.fingerprint }}-manual-${{ inputs.manual_mode }}-cases-v1-${{ hashFiles('examples/**', '!examples/a5/**', 'tests/st/**', '!tests/st/a5/**') }}-inputs-v1-${{ hashFiles('src/common/**', 'src/a2a3/**', 'python/**', 'simpler_setup/**') }}
           restore-keys: |
-            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-${{ inputs.manual_mode }}-cases-v1-${{ hashFiles('examples/**', '!examples/a5/**', 'tests/st/**', '!tests/st/a5/**') }}-
-            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-manual-${{ inputs.manual_mode }}-
-            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-
+            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-toolchain-v1-${{ steps.scene-toolchain.outputs.fingerprint }}-manual-${{ inputs.manual_mode }}-cases-v1-${{ hashFiles('examples/**', '!examples/a5/**', 'tests/st/**', '!tests/st/a5/**') }}-
+            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-toolchain-v1-${{ steps.scene-toolchain.outputs.fingerprint }}-manual-${{ inputs.manual_mode }}-
+            scene-kernels-a2a3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pto_isa.pin') }}-toolchain-v1-${{ steps.scene-toolchain.outputs.fingerprint }}-
 
       - name: Set up environment
         uses: ./.github/actions/setup-venv
@@ -104,6 +108,21 @@ jobs:
           test -n "$runtimes"
           for runtime in $runtimes; do
             .venv/bin/python "examples/a2a3/$runtime/qwen3_14b_decode/main.py" \
+              --platform a2a3 --compile-only --compile-workers 8
+          done
+
+      # The DeepSeek cases are plain pytest functions, so scene_test_compile
+      # does not precompile them. Daily must build them before saving its
+      # manual-include archive, which the dedicated PR job reads as a fallback.
+      - name: Compile DeepSeek standalone kernels (a2a3)
+        if: inputs.manual_mode != 'exclude'
+        run: |
+          source /usr/local/Ascend/cann/set_env.sh
+          runtimes=$(.venv/bin/python -c \
+              "from simpler_setup.platform_info import discover_runtimes; print(' '.join(discover_runtimes('a2a3')))")
+          test -n "$runtimes"
+          for runtime in $runtimes; do
+            .venv/bin/python "examples/a2a3/$runtime/deepseek_v4_flash_decode/main.py" \
               --platform a2a3 --compile-only --compile-workers 8
           done
 
