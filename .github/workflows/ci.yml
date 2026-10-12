@@ -38,7 +38,8 @@ jobs:
       - name: Compile full a2a3 scene-test corpus with 64 workers
         run: |
           source /usr/local/Ascend/cann/set_env.sh
-          /usr/bin/time -f 'ST wall=%e seconds; peak_rss=%M KiB' \\
+          TIMEFORMAT='ST wall=%R seconds'
+          time \\
             .venv/bin/python -m simpler_setup.tools.scene_test_compile examples tests/st \\
               --platform a2a3 --exclude-level 4 --require-pto-isa --compile-workers 64 -q \\
               --manual include
@@ -51,7 +52,8 @@ jobs:
           test -n "$runtimes"
           for runtime in $runtimes; do
             echo "Compiling DeepSeek runtime: $runtime"
-            /usr/bin/time -f "DeepSeek $runtime wall=%e seconds; peak_rss=%M KiB" \\
+            TIMEFORMAT="DeepSeek $runtime wall=%R seconds"
+            time \\
               .venv/bin/python "examples/a2a3/$runtime/deepseek_v4_flash_decode/main.py" \\
                 --platform a2a3 --compile-only --compile-workers 64
           done
