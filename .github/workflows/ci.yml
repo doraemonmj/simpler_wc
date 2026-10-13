@@ -15,6 +15,18 @@ concurrency:
 # Temporary A5 runner validation. Keep the normal CI matrix on main.
 jobs:
   st-onboard-a5:
-    uses: ./.github/workflows/_st-npu-a5.yml
-    with:
-      runs_on: '["self-hosted","a5"]'
+    runs-on: [self-hosted, a5]
+    timeout-minutes: 15
+    steps:
+      - name: Checkout target
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Run A5 onboard smoke
+        shell: bash
+        run: |
+          task-submit --timeout 300 --max-time 300 --device auto --device-num 1 \
+            --run 'source /usr/local/Ascend/cann/set_env.sh && \
+              .claude/skills/onboard-arch-precheck/check.sh a5 && \
+              python3 .github/scripts/a5_onboard_smoke.py'
