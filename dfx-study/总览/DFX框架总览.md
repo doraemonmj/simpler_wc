@@ -229,7 +229,7 @@ VS Code 激活插件 → 注册命令、数据服务、视图路由和 Webview �
   - DFX 的目标与设计思路
   - 时间花在哪里
     - 阶段耗时：STRACE 与 Device phases
-    - [Chip Swimlane：任务执行时间线](simpler-dfx-chip-swimlane-top-down.md)
+    - [Chip Swimlane：任务执行时间线](../专题/芯片泳道任务时间线.md)
     - 任务依赖与调度归因：dep_gen、调度开销、关键路径
   - 执行状态怎么样
     - 任务硬件计数：PMU
