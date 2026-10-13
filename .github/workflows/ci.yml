@@ -27,6 +27,4 @@ jobs:
         shell: bash
         run: |
           task-submit --timeout 300 --max-time 300 --device auto --device-num 1 \
-            --run 'source /usr/local/Ascend/cann/set_env.sh && \
-              .claude/skills/onboard-arch-precheck/check.sh a5 && \
-              python3 .github/scripts/a5_onboard_smoke.py'
+            --run 'source /usr/local/Ascend/cann/set_env.sh && .claude/skills/onboard-arch-precheck/check.sh a5 && python3 .github/scripts/a5_onboard_smoke.py'
