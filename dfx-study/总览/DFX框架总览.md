@@ -226,7 +226,7 @@ VS Code 激活插件 → 注册命令、数据服务、视图路由和 Webview �
 ## 5. DFX 议题树
 
 - **Top-down：从诊断问题出发**
-  - DFX 的目标与设计思路
+  - [DFX 业务流程：从异常到验证](../专题/DFX业务流程.md)
   - 时间花在哪里
     - 阶段耗时：STRACE 与 Device phases
     - [Chip Swimlane：任务执行时间线](../专题/芯片泳道任务时间线.md)
