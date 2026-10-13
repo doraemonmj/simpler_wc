@@ -12,19 +12,24 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Temporary A5 runner validation. Keep the normal CI matrix on main.
+# Temporary A5 onboard validation. Keep the normal CI matrix on main.
 jobs:
   st-onboard-a5:
     runs-on: [self-hosted, a5]
-    timeout-minutes: 15
+    timeout-minutes: 60
+    env:
+      SIMPLER_SCHEDULER_TIMEOUT_MS: "2000"
+      SIMPLER_OP_EXECUTE_TIMEOUT_US: "3000000"
+      SIMPLER_STREAM_SYNC_TIMEOUT_MS: "4000"
     steps:
       - name: Checkout target
         uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - name: Run A5 onboard smoke
+      - name: Run A5 ST onboard
         shell: bash
         run: |
-          task-submit --timeout 300 --max-time 300 --device auto --device-num 1 \
-            --run 'source /usr/local/Ascend/cann/set_env.sh && .claude/skills/onboard-arch-precheck/check.sh a5 && python3 .github/scripts/a5_onboard_smoke.py'
+          ln -s "$HOME/ci/hw-native-sys-simpler/build-a5-ready" build
+          task-submit --timeout 1800 --max-time 1800 --device auto --device-num "${DEVICE_NUM:-8}" \
+            --run 'source /usr/local/Ascend/cann/set_env.sh && source /opt/pypto/toolchain/2026.08.5/activate.sh && source /home/pypto-tools/python-packages/torch-cpu-2.6.0/activate.sh && .claude/skills/onboard-arch-precheck/check.sh a5 && "$HOME/ci/hw-native-sys-simpler/venv/bin/python" -m pytest examples tests/st --platform a5 --exclude-level 4 --device "$TASK_DEVICE" -v --require-pto-isa --pto-session-timeout 1200 --manual exclude'
