@@ -234,12 +234,12 @@ VS Code 激活插件 → 注册命令、数据服务、视图路由和 Webview �
   - 时间花在哪里
     - 阶段耗时：STRACE 与 Device phases
     - [Chip Swimlane：任务执行时间线](../专题/性能诊断/芯片泳道任务时间线.md)
-    - 任务依赖与调度归因：dep_gen、调度开销、关键路径
+    - [任务依赖与调度归因：DepGen](../专题/性能诊断/DepGen任务依赖.md)、调度开销、关键路径
   - 执行状态怎么样
-    - 任务硬件计数：PMU
-    - 资源水位：Scope Stats
+    - [任务硬件计数：PMU](../专题/性能诊断/PMU任务硬件计数.md)
+    - [资源水位：Scope Stats](../专题/性能诊断/Scope资源水位.md)
   - 单任务发生了什么
-    - 参数采集与检查：Args Dump
+    - [参数采集与检查：Args Dump](../专题/性能诊断/ArgsDump任务参数.md)
     - 核内隔离重放：Core Swimlane
 - **Bottom-up：从实现链路出发**
   - 一次运行的 DFX 控制与产物归属
