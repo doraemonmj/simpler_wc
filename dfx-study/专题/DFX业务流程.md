@@ -4,19 +4,13 @@
 
 ### 1.1 DFX 是什么
 
-在系统软件领域，DFX 通常写作 **Design for X**，指围绕不同质量属性开展设计；其中的 X 随目标变化，可以是可靠性、可测试性、可服务性等。
+广义的 DFX（**Design for X**）是一种设计理念，指在系统设计时围绕可靠性、可测试性、可服务性等质量属性建设相应能力。
 
-DFX 在不同系统中的具体能力会有所不同。本文聚焦 simpler 中与运行诊断和性能观测有关的能力：在一次运行的不同位置留下记录，按本轮运行汇集原始产物，再通过分析工具把记录组织成阶段耗时、任务时间线、依赖关系和资源等视图。
-
-simpler 的一次运行跨越 Host、AICPU 和 AICore：Host 准备并发起执行，AICPU 组织任务，AICore 完成计算。最终耗时和返回结果只能告诉我们“这一轮怎么样”，无法单独说明“时间花在哪里”或“异常从哪里开始”。同样是运行变慢，原因可能在 Host 准备、设备调度、任务等待，也可能在任务执行本身。
-
-DFX 将分散在不同执行层和时间点的事实关联起来，让开发者从整轮运行逐步看到阶段和任务。例如，时间线上的空档说明任务没有执行，却不能独自说明它在等待依赖、等待资源，还是没有被及时下发；还需要结合其他记录解释。
+在 simpler 中，DFX 是运行诊断与性能观测的能力集合：Host、AICPU 和 AICore 在各自位置记录运行信息，离线工具再将这些记录整理为阶段耗时、任务时间线、依赖关系和资源等直观视图。
 
 ### 1.2 定位与目标：DFX 要解决什么问题
 
-DFX 的目标是提供运行过程中的信息，帮助用户定位问题并确定优化或修复方向。面对性能问题，可以先确定耗时增长或任务等待发生在哪里，再判断应调整 simpler 的底层调度，还是上层用例的任务组织与执行方式；面对运行错误，则需要缩小到出错的阶段或任务。
-
-DFX 最终服务于具体的优化和修复决策：指出值得改进的环节及其判断依据，缩短从发现问题到确定处理方向的时间。在 human in loop 的设计哲学中，DFX 是连接运行反馈与人工判断的重要环节。
+DFX 主要用于定位运行错误和性能问题，帮助开发者找到相关阶段或任务、分析原因，并确定优化或修复方向。
 
 ## 2. DFX 的设计逻辑
 
@@ -63,10 +57,16 @@ Host 日志直接输出；Device phases 的固定时间槽由 Host 读回后写�
 
 ## 4. 产物处理与查看
 
-**simpler 仓库工具**读取已保存的日志和模块产物，按各自格式生成分析结果：
+### 4.1 仓库自有工具
 
-- `strace_timing.py` 读取 Host 日志中的 `[STRACE]` 标记（包括读回的设备阶段），还原调用层级并汇总阶段耗时；`phase_time_split.py` 可进一步拆分阶段的运行时间和等待时间。
-- `swimlane_converter.py` 读取 `chip_swimlane_records.json`，关联 AICPU 与 AICore 的任务记录并转换设备周期，生成含 `traceEvents` 的 `merged_swimlane.json`。有 `deps.json` 和 `name_map*.json` 时，还可补充依赖箭头与任务名称。`sched_overhead_analysis.py` 和 `critical_path.py` 使用任务记录与依赖生成调度开销、关键路径报告。
-- `deps_viewer.py` 将 `deps.json` 整理成可检索文本或依赖图；`dump_viewer.py` 根据 Args Dump 元数据读取参数内容；`scope_stats_plot.py` 将 scope 记录整理成资源高水位 HTML 报告。`pmu.csv` 目前由仓库导出供查看，没有对应的专用离线分析脚本。
+`simpler_setup/tools/` 中的脚本用于处理已保存的日志和产物，便于按需调整，也适合临时分析：
 
-**IDE 插件**使用 PyPTO Toolkit（VS Code）查看泳道图。对 simpler 的产物，先用 `swimlane_converter.py` 将原始记录转换为 `merged_swimlane.json`，再通过插件的单文件入口打开；插件不直接读取 `chip_swimlane_records.json`。插件扩展端处理 `traceEvents`，整理任务和泳道数据并发送到 Webview，页面提供时间轴、搜索、任务详情和依赖查看等交互。插件只消费已有文件，不参与设备侧采集；其输入格式与处理链详见[DFX 框架总览](../总览/DFX框架总览.md)。
+- **阶段耗时：** `strace_timing.py`、`hbg_bind_phases`、`phase_time_split.py`。
+- **任务时间线与性能分析：** `swimlane_converter.py`、`sched_overhead_analysis.py`、`critical_path.py`。
+- **依赖关系：** `deps_viewer.py`、`wait_reduction_sim.py`。
+- **参数与核内重放：** `dump_viewer.py`、`core_swimlane.py`。
+- **资源统计：** `scope_stats_plot.py`。PMU 产物可直接查看 `pmu.csv`。
+
+### 4.2 IDE 插件
+
+PyPTO Toolkit 是 VS Code 插件，提供较丰富的可视化和交互功能，可查看泳道时间线、任务详情和依赖关系。插件对输入格式有要求，适配新格式需要额外工作。查看 simpler 的泳道产物时，先用 `swimlane_converter.py` 生成 `merged_swimlane.json`，再在插件中打开。更多输入格式和处理细节见[DFX 框架总览](../总览/DFX框架总览.md)。
