@@ -27,9 +27,33 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run A5 ST onboard
+      - name: Build A5 with SDMA
         shell: bash
         run: |
-          ln -s "$HOME/ci/hw-native-sys-simpler-1/build-a5-ready" build
+          source /usr/local/Ascend/cann/set_env.sh
+          source /opt/pypto/toolchain/2026.08.5/activate.sh
+          source /home/pypto-tools/python-packages/torch-cpu-2.6.0/activate.sh
+          SIMPLER_DISABLE_WARNINGS_AS_ERRORS=1 "$HOME/ci/hw-native-sys-simpler-1/venv/bin/python" -m pip install \
+            --no-build-isolation --no-deps --config-settings=build.targets=build_package_a5 .
+
+      - name: Run A5 ST onboard (includes SDMA)
+        shell: bash
+        run: |
           task-submit --timeout 1800 --max-time 1800 --device auto --device-num "${DEVICE_NUM:-4}" \
             --run 'source /usr/local/Ascend/cann/set_env.sh && source /opt/pypto/toolchain/2026.08.5/activate.sh && source /home/pypto-tools/python-packages/torch-cpu-2.6.0/activate.sh && .claude/skills/onboard-arch-precheck/check.sh a5 && "$HOME/ci/hw-native-sys-simpler-1/venv/bin/python" -m pytest examples tests/st --platform a5 --exclude-level 4 --device "$TASK_DEVICE" -v --require-pto-isa --pto-session-timeout 1200 --manual exclude'
+
+      - name: Build A5 with URMA
+        shell: bash
+        run: |
+          source /usr/local/Ascend/cann/set_env.sh
+          source /opt/pypto/toolchain/2026.08.5/activate.sh
+          source /home/pypto-tools/python-packages/torch-cpu-2.6.0/activate.sh
+          SIMPLER_ENABLE_PTO_URMA_WORKSPACE=ON SIMPLER_DISABLE_WARNINGS_AS_ERRORS=1 \
+            "$HOME/ci/hw-native-sys-simpler-1/venv/bin/python" -m pip install \
+            --no-build-isolation --no-deps --config-settings=build.targets=build_package_a5 .
+
+      - name: Run A5 URMA onboard
+        shell: bash
+        run: |
+          task-submit --timeout 1200 --max-time 1200 --device auto --device-num "${DEVICE_NUM:-4}" \
+            --run 'export SIMPLER_ENABLE_PTO_URMA_WORKSPACE=ON; source /usr/local/Ascend/cann/set_env.sh && source /opt/pypto/toolchain/2026.08.5/activate.sh && source /home/pypto-tools/python-packages/torch-cpu-2.6.0/activate.sh && .claude/skills/onboard-arch-precheck/check.sh a5 && "$HOME/ci/hw-native-sys-simpler-1/venv/bin/python" -m pytest examples/a5/tensormap_and_ringbuffer/urma_deferred_completion_demo --platform a5 --device "$TASK_DEVICE" -v --require-pto-isa --pto-session-timeout 1200 --manual exclude'
