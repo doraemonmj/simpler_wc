@@ -30,6 +30,6 @@ jobs:
       - name: Run A5 ST onboard
         shell: bash
         run: |
-          ln -s "$HOME/ci/hw-native-sys-simpler/build-a5-ready" build
-          task-submit --timeout 1800 --max-time 1800 --device auto --device-num "${DEVICE_NUM:-8}" \
-            --run 'source /usr/local/Ascend/cann/set_env.sh && source /opt/pypto/toolchain/2026.08.5/activate.sh && source /home/pypto-tools/python-packages/torch-cpu-2.6.0/activate.sh && .claude/skills/onboard-arch-precheck/check.sh a5 && "$HOME/ci/hw-native-sys-simpler/venv/bin/python" -m pytest examples tests/st --platform a5 --exclude-level 4 --device "$TASK_DEVICE" -v --require-pto-isa --pto-session-timeout 1200 --manual exclude'
+          ln -s "$HOME/ci/hw-native-sys-simpler-1/build-a5-ready" build
+          task-submit --timeout 1800 --max-time 1800 --device auto --device-num "${DEVICE_NUM:-4}" \
+            --run 'source /usr/local/Ascend/cann/set_env.sh && source /opt/pypto/toolchain/2026.08.5/activate.sh && source /home/pypto-tools/python-packages/torch-cpu-2.6.0/activate.sh && .claude/skills/onboard-arch-precheck/check.sh a5 && "$HOME/ci/hw-native-sys-simpler-1/venv/bin/python" -m pytest examples tests/st --platform a5 --exclude-level 4 --device "$TASK_DEVICE" -v --require-pto-isa --pto-session-timeout 1200 --manual exclude'
