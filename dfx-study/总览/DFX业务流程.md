@@ -69,4 +69,4 @@ Host 日志直接输出；Device phases 的固定时间槽由 Host 读回后写�
 
 ### 4.2 IDE 插件
 
-PyPTO Toolkit 是 VS Code 插件，提供较丰富的可视化和交互功能，可查看泳道时间线、任务详情和依赖关系。插件对输入格式有要求，适配新格式需要额外工作。查看 simpler 的泳道产物时，先用 `swimlane_converter.py` 生成 `merged_swimlane.json`，再在插件中打开。更多输入格式和处理细节见[DFX 框架总览](../总览/DFX框架总览.md)。
+PyPTO Toolkit 是 VS Code 插件，提供较丰富的可视化和交互功能，可查看泳道时间线、任务详情和依赖关系。插件对输入格式有要求，适配新格式需要额外工作。查看 simpler 的泳道产物时，先用 `swimlane_converter.py` 生成 `merged_swimlane.json`，再在插件中打开。更多输入格式和处理细节见[DFX 框架总览](DFX框架总览.md)。
