@@ -44,7 +44,7 @@ DFX 子系统的设计与运行主要遵循以下原则：
 
 Host 日志直接输出；Device phases 的固定时间槽由 Host 读回后写入阶段标记；Host 构图依赖直接形成依赖产物。这些路径不经过公共 Collector。
 
-**数据分析层。** simpler 的离线工具读取日志和模块产物，关联运行、任务及时间信息，生成阶段耗时、任务时间线、依赖关系等结果；Core Swimlane 可对单任务做模拟重放，IDE 插件可交互查看转换后的泳道图。具体处理方式见第 4 节。
+**数据分析层。** simpler 的离线工具读取日志和模块产物，关联运行、任务及时间信息，生成阶段耗时、任务时间线、依赖关系等结果；Core Swimlane 可对单任务做模拟重放。PyPTO 3.0 IDE 可直接打开芯片泳道原始记录，并读取依赖图等关联产物；当前产物的完整兼容性仍需按输入 schema 核对。具体处理方式见第 4 节。
 
 ### 3.2 从触发到结论的流程
 
@@ -69,4 +69,4 @@ Host 日志直接输出；Device phases 的固定时间槽由 Host 读回后写�
 
 ### 4.2 IDE 插件
 
-PyPTO Toolkit 是 VS Code 插件，提供较丰富的可视化和交互功能，可查看泳道时间线、任务详情和依赖关系。插件对输入格式有要求，适配新格式需要额外工作。查看 simpler 的泳道产物时，先用 `swimlane_converter.py` 生成 `merged_swimlane.json`，再在插件中打开。更多输入格式和处理细节见[DFX 框架总览](DFX框架总览.md)。
+PyPTO3 Toolkit 是 VS Code 插件，可直接打开 `chip_swimlane_records.json`，并结合 `deps.json`、`name_map*.json` 查看任务详情、依赖与函数名；也可单独打开依赖图和编译 Pass 快照。当前 simpler 导出的 `scheduler_tasks`、`scheduler_records` 和 `run_epoch` 与本机安装包的部分旧解析字段仍有差异，不能把“能打开”当作全部调度视图正确的证明。插件模块和文件结构见[PyPTO 3.0 IDE 学习](../IDE/目录.md)；离线转换到 `merged_swimlane.json` 的路径见[DFX 框架总览](DFX框架总览.md)。

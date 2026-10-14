@@ -142,7 +142,9 @@ Host 与 Device 时间戳可能来自不同 clock，不能直接相减。若记�
 
 ## 4. 外部查看插件：pypto-tools_pypto3
 
-目标仓库是 [majin0824/pypto-tools_pypto3](https://gitcode.com/majin0824/pypto-tools_pypto3)。它是 VS Code 中的 PyPTO Toolkit：读取已有运行结果，把控制流、计算图、泳道图、性能与精度信息组织成可交互视图，不承担 simpler 的设备采集。下面按已拉取的 `master` 提交 `e409fb9`（插件版本 `2.0.19`）概括当前实现。
+**版本范围：以下是旧检出 `e409fb9`（扩展版本 `2.0.19`）的实现记录，不能代表 PyPTO 3.0 的当前输入契约。** PyPTO 3.0 的原始 `chip_swimlane_records.json` 在较新的插件中可直接打开；其模块、所需数据结构和与当前 simpler 产物的兼容边界见 [PyPTO 3.0 IDE 学习](../IDE/目录.md)。
+
+目标仓库是 [majin0824/pypto-tools_pypto3](https://gitcode.com/majin0824/pypto-tools_pypto3)。它是 VS Code 中的 PyPTO Toolkit：读取已有运行结果，把控制流、计算图、泳道图、性能与精度信息组织成可交互视图，不承担 simpler 的设备采集。下面按已拉取的 `master` 提交 `e409fb9`（插件版本 `2.0.19`）概括该旧检出。
 
 ### 4.1 仓库框架
 
@@ -190,22 +192,22 @@ VS Code 激活插件 → 注册命令、数据服务、视图路由和 Webview �
                   → 缓存并分批发送 → 时间轴、泳道、详情和性能面板
 ```
 
-插件当前有两条输入路径：`merged_swimlane.json` 等已有 `traceEvents` 的文件直接进入整理流程；带顶层 `tasks` 的 `perf_swimlane.json` 格式先由插件转换成 trace events。后一条路径会尝试读取同目录的 `deps.json` 和 `name_map*.json`，补充依赖边与函数名。插件还按自己的产物约定查找 `tilefwk_prof_pmu.csv`、`dyn_topo.txt` 等辅助文件。
+此旧检出有两条输入路径：`merged_swimlane.json` 等已有 `traceEvents` 的文件直接进入整理流程；带顶层 `tasks` 的 `perf_swimlane.json` 格式先由插件转换成 trace events。后一条路径会尝试读取同目录的 `deps.json` 和 `name_map*.json`，补充依赖边与函数名。插件还按自己的产物约定查找 `tilefwk_prof_pmu.csv`、`dyn_topo.txt` 等辅助文件。
 
 扩展端把事件整理成进程、线程和任务层级，计算泳道布局、依赖连接及可用的 PMU 信息。处理结果按源文件及辅助文件的修改时间复用缓存；大 trace 有压缩处理路径，普通路径也会分批把任务数据送往 Webview。Vue 页面再提供缩放、搜索、节点详情、依赖查看、时间范围统计和与计算图联动等操作。
 
 ### 4.4 当前与 simpler 产物的衔接
 
-| simpler 产物 | 当前关系 |
-| ------------ | -------- |
-| `chip_swimlane_records.json` | 是分流保存的原始记录，不符合插件当前直接识别的顶层 `tasks` 或 `traceEvents` 输入结构 |
+| simpler 产物 | 此旧检出的关系 |
+| ------------ | -------------- |
+| `chip_swimlane_records.json` | 是分流保存的原始记录，不符合该旧检出直接识别的顶层 `tasks` 或 `traceEvents` 输入结构 |
 | `merged_swimlane.json` | 可由 simpler 的 `swimlane_converter.py` 生成；插件按 trace events 读取并绘制泳道 |
 | `deps.json`、`name_map*.json` | simpler 转换原始记录时可用来补依赖和名称；插件只在处理自己的 `perf_swimlane.json` 路径时另行查找同目录文件 |
-| `pmu.csv`、`CPM_*.json` | 当前源码没有对应的直接读取路径；插件查找的 PMU 文件名是 `tilefwk_prof_pmu.csv` |
+| `pmu.csv`、`CPM_*.json` | 该旧检出没有对应的直接读取路径；插件查找的 PMU 文件名是 `tilefwk_prof_pmu.csv` |
 
-因此，查看 simpler 泳道的可行链路是“原始记录 → simpler 转换器 → `merged_swimlane.json` → 插件单文件视图”。simpler 的运行目录也不会仅凭 `chip_swimlane_records.json` 自动出现在插件侧边栏；侧边栏采用 PyPTO 的 `rundata.json` 索引。第 3 节的脚本负责原始记录到分析结果或标准 trace 的处理，插件负责交互查看。
+因此，在该旧检出中查看 simpler 泳道的可行链路是“原始记录 → simpler 转换器 → `merged_swimlane.json` → 插件单文件视图”。simpler 的运行目录也不会仅凭 `chip_swimlane_records.json` 自动出现在旧版侧边栏；侧边栏采用 PyPTO 的 `rundata.json` 索引。较新的 PyPTO 3.0 直接打开路径见 [IDE 学习](../IDE/目录.md)。
 
-以上是对当前源码路径的核对，尚未用一组 simpler 产物在 VS Code 中做端到端打开验证。
+以上是对该旧检出源码路径的核对，尚未用一组 simpler 产物在 VS Code 中做端到端打开验证。
 
 ### 4.5 怎样打包成 VS Code 扩展
 
