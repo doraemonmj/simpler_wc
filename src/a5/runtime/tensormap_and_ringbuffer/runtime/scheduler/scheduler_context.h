@@ -249,7 +249,7 @@ private:
     // Inactive means the round-robin stride is in force.
     int32_t owned_clusters_[MAX_AICPU_THREADS][CoreTracker::MAX_CLUSTERS]{};
     int32_t owned_cluster_count_[MAX_AICPU_THREADS]{};
-    bool die_affinity_active_{false};
+    bool die_affinity_active_[MAX_AICPU_THREADS]{};
 
     // Fill owned_clusters_[tidx] from the die map. False leaves the caller on
     // round-robin: an unpublished die vector, a bad handshake report, or a

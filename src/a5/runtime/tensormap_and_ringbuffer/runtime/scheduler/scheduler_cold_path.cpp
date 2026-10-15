@@ -918,9 +918,7 @@ void SchedulerContext::handshake_partition(Runtime *runtime, int32_t tidx, int32
 #endif
         core_exec_states_[i] = st;
         core_type_compact_[i] = static_cast<uint8_t>(ready[r].core_type);
-#if SIMPLER_DFX
         physical_core_ids_[i] = ready[r].pcid;
-#endif
     }
     OUT_OF_ORDER_STORE_BARRIER();
 }
@@ -976,7 +974,6 @@ bool SchedulerContext::resolve_die_affinity_clusters(
         if (cluster_die[ci] == my_die) same_die++;
     }
     owned_cluster_count_[tidx] = n;
-    die_affinity_active_ = true;
     LOG_INFO("Cluster ownership (die-affine): tidx=%d die=%d clusters=%d same_die=%d", tidx, my_die, n, same_die);
     return true;
 }
@@ -1002,10 +999,12 @@ void SchedulerContext::handshake_owned_clusters(Runtime *runtime, int32_t tidx, 
         owned[own_n++] = aic_n + 2 * ci;      // AIV0
         owned[own_n++] = aic_n + 2 * ci + 1;  // AIV1
     };
-    if (resolve_die_affinity_clusters(runtime, tidx, active_threads, aic_n)) {
+    die_affinity_active_[tidx] = resolve_die_affinity_clusters(runtime, tidx, active_threads, aic_n);
+    if (die_affinity_active_[tidx]) {
         for (int32_t k = 0; k < owned_cluster_count_[tidx]; k++)
             claim(owned_clusters_[tidx][k]);
     } else {
+        owned_cluster_count_[tidx] = 0;
         for (int32_t ci = tidx; ci < aic_n; ci += active_threads)
             claim(ci);
     }
@@ -1088,9 +1087,7 @@ void SchedulerContext::handshake_owned_clusters(Runtime *runtime, int32_t tidx, 
 #endif
         core_exec_states_[i] = st;
         core_type_compact_[i] = static_cast<uint8_t>(ready[r].core_type);
-#if SIMPLER_DFX
         physical_core_ids_[i] = ready[r].pcid;
-#endif
     }
     OUT_OF_ORDER_STORE_BARRIER();
 }
@@ -1110,7 +1107,7 @@ void SchedulerContext::assign_own_clusters(int32_t tidx) {
     // handshake_owned_clusters resolved and cached this thread's set moments
     // ago; replaying it keeps the two in lockstep by construction rather than
     // by two copies of the same rule.
-    const bool affine = die_affinity_active_;
+    const bool affine = die_affinity_active_[tidx];
     int32_t own_n = 0;
     if (affine) {
         own_n = owned_cluster_count_[tidx];
@@ -1397,6 +1394,10 @@ int32_t SchedulerContext::pre_handshake_init(
     aiv_count_ = cluster_num * PLATFORM_AIV_CORES_PER_BLOCKDIM;
     active_sched_threads_ = (sched_thread_num_ > 0) ? sched_thread_num_ : aicpu_thread_num_;
     handshake_failed_.store(false, std::memory_order_release);
+    for (int32_t t = 0; t < MAX_AICPU_THREADS; t++) {
+        die_affinity_active_[t] = false;
+        owned_cluster_count_[t] = 0;
+    }
 
     // State the barrier-free per-thread init path no longer reaches via
     // post_handshake_init; reset on the leader before any scheduler thread is
