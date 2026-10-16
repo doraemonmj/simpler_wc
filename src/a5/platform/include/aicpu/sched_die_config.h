@@ -22,8 +22,9 @@
  * here for the scheduler's cold path to read, the same shape the profiling
  * enable bits use.
  *
- * Written once per launch by the entry before any scheduler thread reaches
- * cluster assignment, then read-only, so no synchronisation is needed.
+ * Every launched AICPU thread writes the same value before the affinity gate;
+ * scheduler threads read it after the gate. The gate orders the launch phases,
+ * and relaxed atomic access prevents concurrent entry writes from racing.
  */
 
 // 0 means no scheduler slot's die is known; ownership stays round-robin.

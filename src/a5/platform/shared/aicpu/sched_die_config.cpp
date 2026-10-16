@@ -11,13 +11,17 @@
 
 #include "aicpu/sched_die_config.h"
 
+#include <atomic>
+
 namespace {
 // Resident across launches like the other latched per-launch config; the entry
 // overwrites it on every launch, so a stale value cannot survive into a run
 // whose host published a different vector.
-uint64_t g_sched_thread_die_bits = 0;
+std::atomic<uint64_t> g_sched_thread_die_bits{0};
 }  // namespace
 
-extern "C" void set_sched_thread_die_bits(uint64_t bits) { g_sched_thread_die_bits = bits; }
+extern "C" void set_sched_thread_die_bits(uint64_t bits) {
+    g_sched_thread_die_bits.store(bits, std::memory_order_relaxed);
+}
 
-extern "C" uint64_t get_sched_thread_die_bits() { return g_sched_thread_die_bits; }
+extern "C" uint64_t get_sched_thread_die_bits() { return g_sched_thread_die_bits.load(std::memory_order_relaxed); }
