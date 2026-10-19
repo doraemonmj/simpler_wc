@@ -673,7 +673,7 @@ uint64_t compute_sched_thread_die_bits(
         return 0;
     }
     if (topology.scenario_type != AicpuScenarioType::kFg) return 0;
-    if (topology.source == AicpuTopologySource::kOccupyFallback) return 0;
+    if (topology.source != AicpuTopologySource::kDriver) return 0;
 
     uint64_t bits = 0;
     for (int32_t t = 0; t < sched_count; ++t) {
