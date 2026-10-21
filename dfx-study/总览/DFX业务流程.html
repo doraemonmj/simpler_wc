@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>DFX 总览：设计逻辑、组件与运行流程</title>
+  <style>
+:root{--navy:#102b44;--ink:#1a2b3b;--muted:#53697b;--line:#d9e3ec;--blue:#2563eb;--teal:#0b787a;--bg:#f4f7fa;--surface:#fff}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+a{color:#165da8;text-underline-offset:3px}
+a:focus-visible{outline:3px solid #f2a938;outline-offset:3px}
+.wrap{width:min(1100px,calc(100% - 40px));margin:auto}
+.hero{padding:54px 0 44px;color:#fff;background:radial-gradient(circle at 85% 10%,#296188,transparent 38%),linear-gradient(120deg,#102b44,#153b56)}
+.eyebrow{color:#95d9d9;font-size:13px;font-weight:800;letter-spacing:.11em}
+h1{max-width:900px;margin:9px 0 20px;font-size:clamp(34px,5vw,54px);line-height:1.16;letter-spacing:-.025em}
+.hero-links{display:flex;flex-wrap:wrap;gap:9px;color:#dcebf4;font-size:14px}
+.hero-links span{border:1px solid #83a1b2;border-radius:999px;padding:5px 11px;background:#ffffff12}
+nav{position:sticky;top:0;z-index:5;background:#fffffff2;border-bottom:1px solid var(--line);backdrop-filter:blur(12px)}
+nav .wrap{display:flex;gap:24px;overflow:auto;white-space:nowrap;padding:12px 0}
+nav a{color:#405a6e;text-decoration:none;font-size:14px;font-weight:750}
+nav a:hover{color:var(--blue)}
+main{padding:30px 0 70px}
+.chapter{margin-top:44px;scroll-margin-top:75px}
+.chapter:first-child{margin-top:0}
+h2{margin:0 0 22px;padding-bottom:12px;border-bottom:2px solid var(--line);color:var(--navy);font-size:clamp(26px,3vw,33px);line-height:1.28}
+h3{margin:30px 0 12px;color:var(--navy);font-size:21px;line-height:1.35}
+p{max-width:90ch;margin:0 0 15px}
+.chapter>p:first-of-type{font-size:17px}
+code{padding:.12em .34em;border-radius:5px;background:#edf3f8;color:#234665;font:.9em/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}
+#overview p{max-width:92ch}
+#overview h3{display:inline-block;margin-top:24px;padding:7px 11px;border-radius:8px;background:#e5f1f1;color:#0b666b}
+.principles{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0 0;padding:0;list-style:none}
+.principles li{padding:18px;border:1px solid var(--line);border-top:4px solid var(--teal);border-radius:15px;background:var(--surface);box-shadow:0 8px 24px #12344e0a}
+.principles strong{display:block;margin-bottom:7px;color:var(--navy)}
+.pipeline{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin:20px 0 28px}
+.pipeline>div{position:relative;min-height:105px;padding:17px 18px;border-radius:14px;border:1px solid #cbdfe9;background:#eaf3f7}
+.pipeline>div:nth-child(2){background:#e8f5f2;border-color:#c8e5de}
+.pipeline>div:nth-child(3){background:#fff3e5;border-color:#eedfca}
+.pipeline>div:not(:last-child):after{position:absolute;right:-17px;top:31px;z-index:1;content:"→";color:var(--teal);font-size:25px;font-weight:900}
+.pipeline b,.pipeline span{display:block}
+.pipeline b{color:var(--navy);font-size:17px}
+.pipeline span{color:var(--muted);font-size:14px}
+.layer-detail{max-width:none;margin:20px 0 13px;padding:14px 18px;border-left:4px solid var(--teal);border-radius:0 10px 10px 0;background:#e8f5f2}
+#architecture ul:not(.timeline){margin:10px 0 17px;padding-left:24px}
+#architecture ul li{margin:10px 0}
+.table-scroll{overflow-x:auto;margin:17px 0 24px;border:1px solid var(--line);border-radius:15px;background:var(--surface);box-shadow:0 8px 24px #12344e0a}
+table{width:100%;border-collapse:collapse;min-width:700px}
+th,td{text-align:left;vertical-align:top;padding:13px 16px;border-bottom:1px solid var(--line)}
+th{background:#e9f0f6;color:var(--navy);font-size:14px}
+tr:last-child td{border-bottom:0}
+td:first-child{width:23%;font-weight:700}
+td:nth-child(2){width:32%}
+.timeline{display:grid;grid-template-columns:repeat(2,1fr);gap:13px;counter-reset:flow;margin:18px 0 0;padding:0;list-style:none}
+.timeline li{position:relative;min-height:100px;padding:15px 17px 15px 56px;border:1px solid var(--line);border-radius:14px;background:var(--surface);box-shadow:0 8px 24px #12344e0a}
+.timeline li:before{position:absolute;top:17px;left:16px;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--blue);color:white;counter-increment:flow;content:counter(flow);font-size:13px;font-weight:800}
+.timeline strong{color:var(--navy)}
+.output-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;align-items:start}
+.output-card{padding:22px;border:1px solid var(--line);border-radius:17px;background:var(--surface);box-shadow:0 8px 24px #12344e0a}
+.output-card h3{margin:0 0 14px}
+.output-card p{margin-bottom:14px}
+.tool-list{margin:0;padding:0;list-style:none}
+.tool-list li{padding:10px 0;border-top:1px solid var(--line)}
+.tool-list strong{color:#0b6e73}
+footer{border-top:1px solid var(--line);padding:23px 0 33px;color:var(--muted);font-size:13px}
+@media(max-width:800px){.principles{grid-template-columns:1fr}.output-grid{grid-template-columns:1fr}}
+@media(max-width:620px){.wrap{width:min(1100px,calc(100% - 28px))}.hero{padding:40px 0}.pipeline,.timeline{grid-template-columns:1fr}.pipeline>div{min-height:0}.pipeline>div:not(:last-child):after{display:none}}
+@media print{html{scroll-behavior:auto}body{background:white}nav{display:none}.hero{padding:24px 0;print-color-adjust:exact}.chapter{margin-top:28px}.principles li,.timeline li,.output-card,.pipeline>div{box-shadow:none;break-inside:avoid}}
+</style>
+</head>
+<body>
+  <header class="hero"><div class="wrap">
+    <div class="eyebrow">simpler · DFX</div>
+    <h1>DFX 总览：设计逻辑、组件与运行流程</h1>
+    <div class="hero-links" aria-label="文档主题"><span>DFX 概述</span><span>设计逻辑</span><span>整体架构与运行流程</span><span>产物处理与查看</span></div>
+  </div></header>
+  <nav aria-label="页面目录"><div class="wrap"><a href="#overview">1. DFX 概述</a><a href="#principles">2. DFX 的设计逻辑</a><a href="#architecture">3. 整体架构与运行流程</a><a href="#outputs">4. 产物处理与查看</a></div></nav>
+  <main class="wrap"><section class="chapter" id="overview"><h2>1. DFX 概述</h2>
+<h3>1.1 DFX 是什么</h3>
+<p>广义的 DFX（<strong>Design for X</strong>）是一种设计理念，指在系统设计时围绕可靠性、可测试性、可服务性等质量属性建设相应能力。</p>
+<p>在 simpler 中，DFX 是运行诊断与性能观测的能力集合：Host、AICPU 和 AICore 在各自位置记录运行信息，离线工具再将这些记录整理为阶段耗时、任务时间线、依赖关系和资源等直观视图。</p>
+<h3>1.2 定位与目标：DFX 要解决什么问题</h3>
+<p>DFX 主要用于定位运行错误和性能问题，帮助开发者找到相关阶段或任务、分析原因，并确定优化或修复方向。</p>
+</section><section class="chapter" id="principles"><h2>2. DFX 的设计逻辑</h2>
+<p>DFX 子系统的设计与运行主要遵循以下原则：</p>
+<ul class="principles">
+<li><strong>由需求驱动设计。</strong> 有明确的诊断需求时，再设计并实现对应的 DFX 子系统，并由需求确定其职责、采集内容和分析方式。</li>
+<li><strong>保证记录可信，控制观测扰动。</strong> 采集应尽量保持原有执行逻辑和结果，避免额外开销使性能数据偏离。记录还应能归属到具体运行，并说明采集条件、缺失或丢弃情况。</li>
+<li><strong>与主运行流程相对独立。</strong> DFX 的实现应尽量与主流程解耦：关闭专项采集时，主流程照常运行；开启后，应能区分运行失败与采集失败。运行时保留必要事实，复杂的关联和统计放到运行之后。</li>
+</ul>
+</section><section class="chapter" id="architecture"><h2>3. 整体架构与运行流程</h2>
+<h3>3.1 组件与职责</h3>
+<p>按记录从产生到使用的路径，DFX 可分为数据采集层、数据归档层和数据分析层：采集层留下运行事实，归档层汇集记录并形成产物，分析层读取产物生成诊断视图。</p><div aria-label="数据从采集到分析的路径" class="pipeline">
+<div><b>数据采集层</b><span>留下运行事实</span></div>
+<div><b>数据归档层</b><span>汇集记录并形成产物</span></div>
+<div><b>数据分析层</b><span>读取产物生成诊断视图</span></div>
+</div>
+<p class="layer-detail"><strong>数据采集层。</strong> Host、AICPU 和 AICore 在各自掌握事实的位置记录信息。采集模块按诊断问题分工：</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>诊断场景</th>
+<th>要回答的问题</th>
+<th>采集组件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>运行失败、卡住或出现告警</td>
+<td>哪一层报告了什么错误，发生时有什么上下文？</td>
+<td>日志系统记录 Host 和设备侧的状态、告警与错误。</td>
+</tr>
+<tr>
+<td>用例或整轮运行变慢</td>
+<td>时间主要增加在哪个阶段？</td>
+<td>STRACE 记录 Host 阶段，Device phases 记录设备阶段。</td>
+</tr>
+<tr>
+<td>算子性能或调度出现异常</td>
+<td>任务何时下发、执行，哪里出现等待？等待是否由依赖造成？</td>
+<td>Chip Swimlane 记录任务和调度时间；dep_gen 记录任务依赖。</td>
+</tr>
+<tr>
+<td>需要了解 AICore 任务的硬件行为</td>
+<td>流水线、访存、缓存或资源冲突等硬件事件表现如何？</td>
+<td>PMU 按任务采集所选事件组的硬件计数。</td>
+</tr>
+<tr>
+<td>运行中出现资源压力</td>
+<td>哪个范围的资源用量达到高水位？</td>
+<td>Scope Stats 记录支持的运行模式下各 scope 的资源峰值。</td>
+</tr>
+<tr>
+<td>运行报错或结果不对，怀疑参数或张量</td>
+<td>任务实际收到什么输入，产生什么输出？</td>
+<td>Args Dump 记录所选任务的张量输入、输出和标量参数。</td>
+</tr>
+</tbody>
+</table></div>
+<p class="layer-detail"><strong>数据归档层。</strong> 不同采集模块通过各自路径形成可供后续读取的产物：</p>
+<ul>
+<li><strong>数据交接公共框架（Profiling Framework）：</strong> 管理持续产生的设备记录所用的缓冲、Host 接收、缓冲回收和背压，供 Chip Swimlane、PMU、Args Dump、Scope Stats 及设备侧构图时的 dep_gen 共用。它负责交接记录，不解释记录内容。</li>
+<li><strong>产物整理与落盘（各模块的 Host Collector）：</strong> 按记录类型和运行归属整理数据并导出文件。默认模式在本轮结束时完成导出；启用 <code>collect_across_runs</code> 后，支持跨轮保留的 Collector 可在下一轮设备运行期间后台发布本轮文件。</li>
+</ul>
+<p>Host 日志直接输出；Device phases 的固定时间槽由 Host 读回后写入阶段标记；Host 构图依赖直接形成依赖产物。这些路径不经过公共 Collector。</p>
+<p class="layer-detail"><strong>数据分析层。</strong> simpler 的离线工具读取日志和模块产物，关联运行、任务及时间信息，生成阶段耗时、任务时间线、依赖关系等结果；Core Swimlane 可对单任务做模拟重放。PyPTO 3.0 IDE 可直接打开芯片泳道原始记录，并读取依赖图等关联产物；当前产物的完整兼容性仍需按输入 schema 核对。具体处理方式见第 4 节。</p>
+<h3>3.2 从触发到结论的流程</h3>
+<ol class="timeline">
+<li><strong>配置 DFX。</strong> 根据要排查的问题，确定日志级别、本轮启用的采集模块和输出位置；需要跨轮后台导出时，在 Worker 初始化时启用 <code>collect_across_runs</code>。</li>
+<li><strong>初始化采集。</strong> 运行开始前校验配置，按需准备各模块的采集状态、设备缓冲和 Host 接收端。</li>
+<li><strong>运行并记录。</strong> 主流程执行时，Host、AICPU 和 AICore 在各自负责的位置记录阶段、任务、状态或参数等信息（DFX子系统）。</li>
+<li><strong>交接并保存。</strong> 日志按各自通道输出；持续产生的设备记录经公共框架交给 Host，由对应模块整理和保存。</li>
+<li><strong>关闭本轮采集窗口。</strong> 启用采集的运行按各自的运行标识归属记录。设备执行结束后，Host 读回固定阶段记录，相关模块关闭本轮采集窗口。默认模式在 <code>run()</code> 返回前排空、核对并完成应有产物的导出；跨轮模式下，支持跨轮保留的模块可在下一轮设备运行期间后台发布本轮文件，因此 <code>run()</code> 返回时文件可能尚未完成。</li>
+<li><strong>确认产物并分析。</strong> 跨轮模式在读取产物前调用 <code>Worker.flush_diagnostics()</code>，确认此前已关闭的各轮产物完成发布；随后用离线工具将日志和产物整理成阶段耗时、任务时间线等视图。</li>
+</ol>
+</section><section class="chapter" id="outputs"><h2>4. 产物处理与查看</h2>
+<div class="output-grid"><article class="output-card"><h3>4.1 仓库自有工具</h3>
+<p><code>simpler_setup/tools/</code> 中的脚本用于处理已保存的日志和产物，便于按需调整，也适合临时分析：</p>
+<ul class="tool-list">
+<li><strong>阶段耗时：</strong> <code>strace_timing.py</code>、<code>hbg_bind_phases</code>、<code>phase_time_split.py</code>。</li>
+<li><strong>任务时间线与性能分析：</strong> <code>swimlane_converter.py</code>、<code>sched_overhead_analysis.py</code>、<code>critical_path.py</code>。</li>
+<li><strong>依赖关系：</strong> <code>deps_viewer.py</code>、<code>wait_reduction_sim.py</code>。</li>
+<li><strong>参数与核内重放：</strong> <code>dump_viewer.py</code>、<code>core_swimlane.py</code>。</li>
+<li><strong>资源统计：</strong> <code>scope_stats_plot.py</code>。PMU 产物可直接查看 <code>pmu.csv</code>。</li>
+</ul>
+</article><article class="output-card"><h3>4.2 IDE 插件</h3>
+<p>PyPTO3 Toolkit 是 VS Code 插件，可直接打开 <code>chip_swimlane_records.json</code>，并结合 <code>deps.json</code>、<code>name_map*.json</code> 查看任务详情、依赖与函数名；也可单独打开依赖图和编译 Pass 快照。当前 simpler 导出的 <code>scheduler_tasks</code>、<code>scheduler_records</code> 和 <code>run_epoch</code> 与本机安装包的部分旧解析字段仍有差异，不能把“能打开”当作全部调度视图正确的证明。插件模块和文件结构见<a href="../IDE/目录.md">PyPTO 3.0 IDE 学习</a>；离线转换到 <code>merged_swimlane.json</code> 的路径见<a href="DFX框架总览.md">DFX 框架总览</a>。</p></article></div></section></main>
+  <footer><div class="wrap">内容来源：<a href="DFX业务流程.md">DFX业务流程.md</a></div></footer>
+</body>
+</html>

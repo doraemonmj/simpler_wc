@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>simpler 主线 DFX 框架概览</title>
+  <style>
+    :root {
+      --ink: #182230;
+      --muted: #64748b;
+      --line: #dbe3ec;
+      --surface: #ffffff;
+      --canvas: #f5f7fa;
+      --navy: #102a43;
+      --blue: #2563eb;
+      --blue-soft: #e8f0ff;
+      --teal: #0f766e;
+      --teal-soft: #e4f7f3;
+      --amber: #b45309;
+      --amber-soft: #fff3d6;
+      --violet: #6d28d9;
+      --violet-soft: #f0eafe;
+      --danger: #b42318;
+      --shadow: 0 14px 38px rgba(15, 42, 67, 0.08);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--canvas);
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 90% 3%, rgba(37, 99, 235, 0.09), transparent 25rem),
+        var(--canvas);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+
+    a { color: inherit; }
+
+    code {
+      padding: 0.12rem 0.38rem;
+      border: 1px solid #d8e0ea;
+      border-radius: 6px;
+      color: #234;
+      background: #f4f7fb;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.88em;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 68px 24px 56px;
+      color: #fff;
+      background:
+        linear-gradient(125deg, rgba(16, 42, 67, 0.98), rgba(21, 55, 88, 0.94)),
+        var(--navy);
+    }
+
+    .hero::after {
+      position: absolute;
+      top: -145px;
+      right: -95px;
+      width: 440px;
+      height: 440px;
+      border: 70px solid rgba(255, 255, 255, 0.045);
+      border-radius: 50%;
+      content: "";
+    }
+
+    .wrap {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .hero .wrap { position: relative; z-index: 1; }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 11px;
+      border: 1px solid rgba(255, 255, 255, 0.24);
+      border-radius: 999px;
+      color: #dcecff;
+      background: rgba(255, 255, 255, 0.08);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+
+    h1 {
+      max-width: 850px;
+      margin: 22px 0 14px;
+      font-size: clamp(34px, 5vw, 60px);
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+    }
+
+    .lede {
+      max-width: 840px;
+      margin: 0;
+      color: #cbddec;
+      font-size: clamp(17px, 2vw, 21px);
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .meta span {
+      padding: 7px 11px;
+      border-radius: 8px;
+      color: #deebf7;
+      background: rgba(255, 255, 255, 0.075);
+      font-size: 13px;
+    }
+
+    .jumpbar {
+      position: sticky;
+      z-index: 20;
+      top: 0;
+      border-bottom: 1px solid rgba(219, 227, 236, 0.9);
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(12px);
+    }
+
+    .jumpbar .wrap {
+      display: flex;
+      gap: 22px;
+      overflow-x: auto;
+      padding-top: 13px;
+      padding-bottom: 13px;
+      scrollbar-width: none;
+    }
+
+    .jumpbar a {
+      flex: 0 0 auto;
+      color: #52657a;
+      font-size: 14px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .jumpbar a:hover { color: var(--blue); }
+
+    main { padding: 42px 0 72px; }
+
+    section {
+      scroll-margin-top: 72px;
+      margin-top: 54px;
+    }
+
+    section:first-child { margin-top: 0; }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: 1fr minmax(260px, 0.7fr);
+      gap: 28px;
+      align-items: end;
+      margin-bottom: 20px;
+    }
+
+    h2 {
+      margin: 0;
+      color: var(--navy);
+      font-size: clamp(25px, 3vw, 34px);
+      line-height: 1.2;
+      letter-spacing: -0.025em;
+    }
+
+    .section-kicker {
+      margin-bottom: 5px;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .section-note {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .analysis-note { margin-top: 14px; }
+
+    .insight {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 15px;
+      align-items: start;
+      margin-bottom: 24px;
+      padding: 18px 20px;
+      border: 1px solid #cbdcff;
+      border-left: 5px solid var(--blue);
+      border-radius: 14px;
+      background: #f7faff;
+      box-shadow: 0 8px 24px rgba(37, 99, 235, 0.06);
+    }
+
+    .insight-mark {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      place-items: center;
+      color: #fff;
+      background: var(--blue);
+      font-size: 16px;
+      font-weight: 800;
+    }
+
+    .insight strong { color: #12396f; }
+
+    .panel {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .architecture {
+      padding: 26px;
+    }
+
+    .architecture svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .legend span {
+      display: inline-flex;
+      gap: 7px;
+      align-items: center;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      position: relative;
+      min-height: 190px;
+      overflow: hidden;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+      box-shadow: 0 9px 26px rgba(15, 42, 67, 0.055);
+    }
+
+    .card::before {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: var(--accent, var(--blue));
+      content: "";
+    }
+
+    .card .num {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      margin-bottom: 15px;
+      border-radius: 10px;
+      place-items: center;
+      color: var(--accent, var(--blue));
+      background: var(--soft, var(--blue-soft));
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      color: #20364d;
+      font-size: 18px;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .matrix {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th, td {
+      padding: 15px 16px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      color: #42566d;
+      background: #f7f9fc;
+      font-size: 12px;
+      letter-spacing: 0.035em;
+      text-transform: uppercase;
+    }
+
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:hover td { background: #fafcff; }
+
+    .capability {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      min-width: 130px;
+      color: #20364d;
+      font-weight: 800;
+    }
+
+    .cap-dot {
+      width: 10px;
+      height: 10px;
+      flex: 0 0 10px;
+      border-radius: 50%;
+      background: var(--cap, var(--blue));
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--cap, var(--blue)) 14%, transparent);
+    }
+
+    .tag {
+      display: inline-block;
+      margin: 2px 3px 2px 0;
+      padding: 3px 8px;
+      border-radius: 999px;
+      color: #41556c;
+      background: #edf2f7;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .phase {
+      position: relative;
+      min-height: 205px;
+      padding: 25px 21px 22px;
+      border-right: 1px solid var(--line);
+    }
+
+    .phase:last-child { border-right: 0; }
+
+    .phase:not(:last-child)::after {
+      position: absolute;
+      z-index: 2;
+      top: 38px;
+      right: -9px;
+      width: 16px;
+      height: 16px;
+      border-top: 2px solid #9fb0c3;
+      border-right: 2px solid #9fb0c3;
+      background: #fff;
+      content: "";
+      transform: rotate(45deg);
+    }
+
+    .phase-id {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 29px;
+      height: 29px;
+      margin-bottom: 14px;
+      border-radius: 50%;
+      color: #fff;
+      background: var(--blue);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .phase h3 {
+      margin: 0 0 8px;
+      color: #20364d;
+      font-size: 17px;
+    }
+
+    .phase p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .callout-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .callout {
+      padding: 19px 20px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+    }
+
+    .callout h3 {
+      margin: 0 0 7px;
+      font-size: 16px;
+    }
+
+    .callout p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .arch-card {
+      padding: 25px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .arch-card h3 {
+      margin: 0 0 13px;
+      color: var(--navy);
+      font-size: 22px;
+    }
+
+    .arch-card ul {
+      margin: 0;
+      padding-left: 20px;
+      color: var(--muted);
+    }
+
+    .same {
+      display: grid;
+      width: 90px;
+      place-items: center;
+      color: var(--teal);
+      font-size: 13px;
+      font-weight: 900;
+      text-align: center;
+    }
+
+    .same::before {
+      display: block;
+      width: 52px;
+      height: 52px;
+      margin: 0 auto 8px;
+      border-radius: 50%;
+      color: #fff;
+      background: var(--teal);
+      content: "=";
+      font-size: 31px;
+      line-height: 49px;
+    }
+
+    footer {
+      padding: 28px 20px 42px;
+      color: #718096;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 920px) {
+      .section-head { grid-template-columns: 1fr; gap: 8px; }
+      .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .timeline { grid-template-columns: 1fr 1fr; }
+      .phase:nth-child(2) { border-right: 0; }
+      .phase:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+      .phase:nth-child(2)::after { display: none; }
+      .compare { grid-template-columns: 1fr; }
+      .same { width: 100%; }
+      .same::before { margin-bottom: 0; }
+    }
+
+    @media (max-width: 620px) {
+      .wrap { width: min(100% - 24px, 1180px); }
+      .hero { padding: 48px 12px 42px; }
+      .cards, .callout-row, .timeline { grid-template-columns: 1fr; }
+      .phase { border-right: 0; border-bottom: 1px solid var(--line); }
+      .phase:last-child { border-bottom: 0; }
+      .phase::after { display: none !important; }
+      .architecture { padding: 12px; }
+      th, td { padding: 12px; }
+    }
+
+    @media print {
+      .jumpbar { display: none; }
+      body { background: #fff; }
+      .hero { padding: 34px 20px; print-color-adjust: exact; }
+      .panel, .card, .timeline, .arch-card { box-shadow: none; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <div class="eyebrow">MAINLINE ARCHITECTURE NOTE</div>
+      <h1>simpler 主线 DFX 框架概览</h1>
+      <p class="lede">
+        DFX 由轻量时序、五类按需采集器、统一 Host/AICPU 缓冲框架和离线分析工具共同组成。
+        这份页面聚焦结构与边界，不展开字段和算法细节。
+      </p>
+      <div class="meta">
+        <span>代码基线：upstream/main</span>
+        <span>提交：172682a6</span>
+        <span>文档位置：runtime/simpler_wc</span>
+        <span>范围：框架级分析</span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="jumpbar" aria-label="页面导航">
+    <div class="wrap">
+      <a href="#architecture">总体架构</a>
+      <a href="#capabilities">能力矩阵</a>
+      <a href="#analysis">分析与可视化</a>
+      <a href="#layers">框架分层</a>
+      <a href="#lifecycle">运行生命周期</a>
+      <a href="#platforms">架构差异</a>
+    </div>
+  </nav>
+
+  <main class="wrap">
+    <section id="architecture">
+      <div class="insight">
+        <span class="insight-mark">i</span>
+        <div>
+          <strong>核心判断：</strong>
+          simpler 已经形成统一的流式采集框架。新增 DFX 能力通常只需定义共享数据布局、
+          Module trait 和采集器特有的输出逻辑，无需重做线程、缓冲池和队列。
+        </div>
+      </div>
+
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Architecture</div>
+          <h2>从调用开关到分析产物</h2>
+        </div>
+        <p class="section-note">
+          主链路沿着 CallConfig、DeviceRunner、设备采集点和 Host Collector 向下；
+          STRACE 是旁路的轻量时序通道。
+        </p>
+      </div>
+
+      <div class="panel architecture">
+        <svg viewBox="0 0 1120 435" role="img" aria-labelledby="flowTitle flowDesc">
+          <title id="flowTitle">simpler DFX 总体数据流</title>
+          <desc id="flowDesc">配置进入运行边界，驱动设备采集，再经 Host 收集生成原始产物和分析结果。</desc>
+          <defs>
+            <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" fill="#93a4b8"/>
+            </marker>
+            <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#102a43" flood-opacity=".09"/>
+            </filter>
+          </defs>
+
+          <rect x="24" y="44" width="226" height="118" rx="16" fill="#e8f0ff" stroke="#b8ccff" filter="url(#softShadow)"/>
+          <text x="46" y="78" fill="#2563eb" font-size="13" font-weight="800">01 CONFIG</text>
+          <text x="46" y="108" fill="#19344f" font-size="19" font-weight="800">SceneTest / CallConfig</text>
+          <text x="46" y="136" fill="#64748b" font-size="13">运行时开关 + output_prefix</text>
+
+          <rect x="306" y="44" width="226" height="118" rx="16" fill="#e4f7f3" stroke="#a9ddd3" filter="url(#softShadow)"/>
+          <text x="328" y="78" fill="#0f766e" font-size="13" font-weight="800">02 RUN BOUNDARY</text>
+          <text x="328" y="108" fill="#19344f" font-size="19" font-weight="800">DfxRunConfig</text>
+          <text x="328" y="136" fill="#64748b" font-size="13">DeviceRunner 生命周期</text>
+
+          <rect x="588" y="44" width="226" height="118" rx="16" fill="#fff3d6" stroke="#f1ce83" filter="url(#softShadow)"/>
+          <text x="610" y="78" fill="#b45309" font-size="13" font-weight="800">03 DEVICE PRODUCER</text>
+          <text x="610" y="108" fill="#19344f" font-size="19" font-weight="800">AICPU / AICore</text>
+          <text x="610" y="136" fill="#64748b" font-size="13">写缓冲并发布 ready queue</text>
+
+          <rect x="870" y="44" width="226" height="118" rx="16" fill="#f0eafe" stroke="#d5c4fb" filter="url(#softShadow)"/>
+          <text x="892" y="78" fill="#6d28d9" font-size="13" font-weight="800">04 HOST COLLECTOR</text>
+          <text x="892" y="108" fill="#19344f" font-size="19" font-weight="800">ProfilerBase</text>
+          <text x="892" y="136" fill="#64748b" font-size="13">drain / replenish / collect</text>
+
+          <line x1="250" y1="103" x2="296" y2="103" stroke="#93a4b8" stroke-width="2" marker-end="url(#arrow)"/>
+          <line x1="532" y1="103" x2="578" y2="103" stroke="#93a4b8" stroke-width="2" marker-end="url(#arrow)"/>
+          <line x1="814" y1="103" x2="860" y2="103" stroke="#93a4b8" stroke-width="2" marker-end="url(#arrow)"/>
+
+          <rect x="870" y="206" width="226" height="78" rx="14" fill="#fff" stroke="#dbe3ec"/>
+          <text x="892" y="238" fill="#19344f" font-size="16" font-weight="800">BufferPoolManager</text>
+          <text x="892" y="263" fill="#64748b" font-size="13">ready / done / recycled / mapping</text>
+          <line x1="983" y1="162" x2="983" y2="196" stroke="#93a4b8" stroke-width="2" marker-end="url(#arrow)"/>
+
+          <rect x="588" y="332" width="508" height="76" rx="14" fill="#fff" stroke="#dbe3ec"/>
+          <text x="612" y="363" fill="#19344f" font-size="16" font-weight="800">仓库工具：分析 / 转换 / 生成 HTML 报告</text>
+          <text x="612" y="389" fill="#64748b" font-size="13">外部查看器：Perfetto / MindStudio Insight 打开兼容 trace</text>
+          <path d="M983 284 L983 314 L842 314 L842 322" fill="none" stroke="#93a4b8" stroke-width="2" marker-end="url(#arrow)"/>
+
+          <rect x="24" y="228" width="508" height="92" rx="14" fill="#f7faff" stroke="#cbdcff"/>
+          <text x="46" y="260" fill="#2563eb" font-size="13" font-weight="800">LIGHTWEIGHT SIDE CHANNEL</text>
+          <text x="46" y="288" fill="#19344f" font-size="17" font-weight="800">STRACE 日志 → strace_timing</text>
+          <text x="282" y="288" fill="#64748b" font-size="13">默认编译开启，不依赖流式 Collector</text>
+          <path d="M419 162 L419 194 L278 194 L278 218" fill="none" stroke="#93a4b8" stroke-width="2" marker-end="url(#arrow)"/>
+        </svg>
+        <div class="legend" aria-label="图例">
+          <span><i class="dot" style="background:#2563eb"></i>配置入口</span>
+          <span><i class="dot" style="background:#0f766e"></i>运行边界</span>
+          <span><i class="dot" style="background:#b45309"></i>设备生产者</span>
+          <span><i class="dot" style="background:#6d28d9"></i>Host 通用框架</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="capabilities">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Capabilities</div>
+          <h2>DFX 能力矩阵</h2>
+        </div>
+        <p class="section-note">先看问题类型，再选择采集通道。轻量时序优先使用 STRACE。</p>
+      </div>
+
+      <div class="panel matrix">
+        <table>
+          <thead>
+            <tr>
+              <th>能力</th>
+              <th>回答的问题</th>
+              <th>主要产物</th>
+              <th>仓库内处理</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="capability"><i class="cap-dot" style="--cap:#2563eb"></i>STRACE</span></td>
+              <td>一次运行的 Host、Device、Orch、Sched 时间去了哪里？</td>
+              <td><span class="tag">日志行</span><span class="tag">span tree</span></td>
+              <td><code>strace_timing</code>、<code>hbg_bind_phases</code></td>
+            </tr>
+            <tr>
+              <td><span class="capability"><i class="cap-dot" style="--cap:#6d28d9"></i>Chip Swimlane</span></td>
+              <td>每个任务何时调度、在哪个核执行，scheduler 是否形成瓶颈？</td>
+              <td><code>chip_swimlane_records.json</code></td>
+              <td><code>swimlane_converter</code>、<code>sched_overhead_analysis</code></td>
+            </tr>
+            <tr>
+              <td><span class="capability"><i class="cap-dot" style="--cap:#b45309"></i>PMU</span></td>
+              <td>某个 AICore 任务的流水线、访存和 Cache 计数器表现如何？</td>
+              <td><code>pmu.csv</code></td>
+              <td>导出 CSV；无专用分析 CLI</td>
+            </tr>
+            <tr>
+              <td><span class="capability"><i class="cap-dot" style="--cap:#0f766e"></i>dep_gen</span></td>
+              <td>任务、张量和依赖边构成怎样的完整 DAG？</td>
+              <td><code>deps.json</code></td>
+              <td><code>deps_viewer</code>、<code>wait_reduction_sim</code></td>
+            </tr>
+            <tr>
+              <td><span class="capability"><i class="cap-dot" style="--cap:#c2410c"></i>Args Dump</span></td>
+              <td>任务实际收到哪些参数，能否提取 payload 做单任务重放？</td>
+              <td><code>args_dump.json</code>、<code>args.bin</code></td>
+              <td><code>dump_viewer</code>、<code>core_swimlane</code></td>
+            </tr>
+            <tr>
+              <td><span class="capability"><i class="cap-dot" style="--cap:#be185d"></i>Scope Stats</span></td>
+              <td>哪个 orchestration scope 的 ring、heap 或 dep pool 达到峰值？</td>
+              <td><code>scope_stats.jsonl</code></td>
+              <td><code>scope_stats_plot</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout-row">
+        <div class="callout">
+          <h3>Chip Swimlane 等级</h3>
+          <p>Level 1 采 AICore 时间；2 增加 dispatch/finish；3 增加 scheduler phases；4 再增加 orchestrator phases。同等级的 Level 1 或 2 运行在满足保留采集条件时可以接续下发，共用设备队列。</p>
+        </div>
+        <div class="callout">
+          <h3>依赖图保持离线合并</h3>
+          <p>Swimlane 热路径不记录依赖箭头。转换工具按 task id 将时间数据与 deps.json 合并。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="analysis">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Analysis &amp; Visualization</div>
+          <h2>从产物到结论：两种处理方式</h2>
+        </div>
+        <p class="section-note">先核对运行归属、完整性与时钟，再区分结果由仓库工具生成，还是交给外部查看器或插件处理。</p>
+      </div>
+
+      <div class="callout-row">
+        <div class="callout">
+          <h3>方式一：仓库内工具</h3>
+          <p><code>simpler_setup.tools</code> 计算阶段耗时、调度开销与关键路径，也做格式转换。<code>deps_viewer</code> 和 <code>scope_stats_plot</code> 还能直接生成独立 HTML，浏览器即可打开。</p>
+        </div>
+        <div class="callout">
+          <h3>方式二：外部查看器或插件</h3>
+          <p><code>swimlane_converter</code> 导出兼容 trace 后，可用 Perfetto 看时间线；<code>core_swimlane</code> 的核内 trace 可用 MindStudio Insight 或 Perfetto 查看。外部工具负责交互浏览或自己的进一步分析。</p>
+        </div>
+      </div>
+      <p class="section-note analysis-note">浏览器只是打开仓库生成的 HTML；Perfetto 和 Insight 是独立查看器。<code>.claude/skills/dfx-analyze</code> 是使用指引，不是另一个分析引擎。</p>
+      <p class="section-note analysis-note">解释结果时仍须核对记录完整性、任务关联和时钟域；外部插件若计算新指标，应说明自己的口径。</p>
+    </section>
+
+    <section id="layers">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Layers</div>
+          <h2>六个稳定层次</h2>
+        </div>
+        <p class="section-note">公共机制集中在 src/common/platform，具体能力只保留领域差异。</p>
+      </div>
+
+      <div class="cards">
+        <article class="card" style="--accent:#2563eb;--soft:#e8f0ff">
+          <span class="num">01</span>
+          <h3>用户入口</h3>
+          <p>SceneTest CLI 或 Python CallConfig 选择能力、等级与输出目录。</p>
+        </article>
+        <article class="card" style="--accent:#0f766e;--soft:#e4f7f3">
+          <span class="num">02</span>
+          <h3>运行配置</h3>
+          <p>DfxRunConfig 固化单次运行快照，隔离流水并发中的前后运行。</p>
+        </article>
+        <article class="card" style="--accent:#6d28d9;--soft:#f0eafe">
+          <span class="num">03</span>
+          <h3>Host 控制层</h3>
+          <p>ProfilerBase 管理 drain、replenish、collector 线程和 start/stop。</p>
+        </article>
+        <article class="card" style="--accent:#7c3aed;--soft:#f0eafe">
+          <span class="num">04</span>
+          <h3>Host 数据层</h3>
+          <p>BufferPoolManager 管理 SPSC 队列、地址映射和缓冲所有权。</p>
+        </article>
+        <article class="card" style="--accent:#b45309;--soft:#fff3d6">
+          <span class="num">05</span>
+          <h3>设备算法层</h3>
+          <p>DeviceProfilerEngine 统一 ready/free 等待、发布与换缓冲。</p>
+        </article>
+        <article class="card" style="--accent:#c2410c;--soft:#fff0e8">
+          <span class="num">06</span>
+          <h3>领域与分析层</h3>
+          <p>具体 Collector 解释记录；simpler_setup.tools 生成可读结果。</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="lifecycle">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Lifecycle</div>
+          <h2>一次运行的四段生命周期</h2>
+        </div>
+        <p class="section-note">默认模式按管理线程、Collector 的顺序完成最终 drain；保留模式按 run epoch 封住每轮边界。</p>
+      </div>
+
+      <div class="timeline">
+        <article class="phase">
+          <span class="phase-id">1</span>
+          <h3>解析与预置</h3>
+          <p>校验 output_prefix，构造 DfxRunConfig，分配 run epoch，预置设备缓冲和 free queue。</p>
+        </article>
+        <article class="phase">
+          <span class="phase-id">2</span>
+          <h3>设备侧生产</h3>
+          <p>AICPU/AICore 写当前缓冲；满缓冲进入 ready queue，并领取替换缓冲继续采集。</p>
+        </article>
+        <article class="phase">
+          <span class="phase-id">3</span>
+          <h3>Host 流式消费</h3>
+          <p>drain 线程复制或映射数据；collector 解释记录；replenish 回收并补足缓冲。</p>
+        </article>
+        <article class="phase">
+          <span class="phase-id">4</span>
+          <h3>封口与发布</h3>
+          <p>默认模式同步完成最终 drain 与导出；保留模式先封住本轮边界，再由后台整理和发布文件。</p>
+        </article>
+      </div>
+
+      <div class="callout-row">
+        <div class="callout">
+          <h3>背压策略</h3>
+          <p>按 lane 阻塞等待，正常压力下不主动丢记录；Host 连续 30 秒无进展才触发保护性 drop。</p>
+        </div>
+        <div class="callout">
+          <h3>后台发布</h3>
+          <p><code>collect_across_runs=True</code> 可让文件发布与下一次设备运行重叠；<code>Worker.flush_diagnostics()</code> 是发布与完整性的确认屏障。仅启用 Chip Swimlane、两次运行同为 Level 1 或同为 Level 2、使用不同 pipeline slot，且 Collector 形状不变并有可用的保留桶时，后继运行可接续下发。每轮按 run epoch 归属记录和元数据。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="platforms">
+      <div class="section-head">
+        <div>
+          <div class="section-kicker">Platforms</div>
+          <h2>a2a3 与 a5 的统一面和差异点</h2>
+        </div>
+        <p class="section-note">对用户保持同一开关和产物格式，传输实现按硬件能力分化。</p>
+      </div>
+
+      <div class="compare">
+        <article class="arch-card">
+          <h3>a2a3</h3>
+          <ul>
+            <li>通过 Host 注册后的映射内存访问设备缓冲。</li>
+            <li>Host 可以解析设备指针到映射地址。</li>
+            <li>统一框架直接消费映射后的 payload。</li>
+          </ul>
+        </article>
+        <div class="same">同一框架<br>同一产物</div>
+        <article class="arch-card">
+          <h3>a5</h3>
+          <ul>
+            <li>没有同样的 halHostRegister 路径。</li>
+            <li>每个设备缓冲配对 Host shadow。</li>
+            <li>通过 rtMemcpy 拉取 payload，并只回写 Host 修改的字段。</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="callout-row">
+        <div class="callout">
+          <h3>运行时差异</h3>
+          <p>dep_gen 在 TMR 侧主要消费设备 orchestration 记录；HBG 可从 Host 构图直接生成相同 deps.json。</p>
+        </div>
+        <div class="callout">
+          <h3>能力边界</h3>
+          <p>Scope Stats 当前面向 TMR 的 ring/scope 模型；其余主体 Collector 跨 runtime 复用。</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    依据 simpler upstream/main 172682a6 整理 · 本页为框架级代码分析，不包含硬件执行结果
+  </footer>
+</body>
+</html>
