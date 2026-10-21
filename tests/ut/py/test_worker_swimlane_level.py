@@ -43,7 +43,7 @@ def _run(arch, runtime, device, borrowed, root):
             lib.rtSetDevice.argtypes = [ctypes.c_int]
             assert lib.rtSetDevice(device) == 0
             contexts = _CallerContexts(lib, device)
-        worker = Worker(level=2, device_id=device, platform=arch, runtime=runtime)
+        worker = Worker(level=2, device_id=device, platform=arch, runtime=runtime, output_root=root)
         handle = worker.register(_callable(arch, runtime))
         worker.init(borrowed_context_generation=77 if borrowed else None)
         assert lib.aclrtCreateStream(ctypes.byref(stream)) == 0
@@ -58,21 +58,20 @@ def _run(arch, runtime, device, borrowed, root):
                 Tensor(backing, shapes=(count,), dtype=DataType.FLOAT32),
                 TensorArgType.INPUT if i < 2 else TensorArgType.OUTPUT_EXISTING,
             )
-        for invocation, level in enumerate((4, 1, 0, 3, 2)):
-            folder = root / str(invocation)
-            folder.mkdir()
+        for level in (4, 1, 0, 3, 2):
             config = CallConfig()
             config.enable_chip_swimlane = level
-            config.output_prefix = str(folder)
             worker.submit(handle, args, config, caller_stream=stream.value).wait()
+            capture = worker.capture_output_prefix
             result = array.array("f", [0.0]) * count
             worker.copy_from(result, buffers[2])
             expected = 47.0 if runtime == "tensormap_and_ringbuffer" else 42.0
             assert all(value == expected for value in result), (level, result[:8])
-            artifact = folder / "chip_swimlane_records.json"
             if level == 0:
-                assert not artifact.exists()
+                assert capture is None
                 continue
+            assert capture is not None
+            artifact = Path(capture) / "chip_swimlane_records.json"
             data = json.loads(artifact.read_text())
             assert data["chip_swimlane_level"] == level
             assert data["aicore_tasks"]
