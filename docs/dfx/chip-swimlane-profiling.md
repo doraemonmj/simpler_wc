@@ -254,6 +254,10 @@ When an L3 Worker is attached below L4, all of its outputs first enter the
 parent-assigned node namespace:
 
 ```text
+<output_root>/
+└── host_logs/<session-id>/
+    └── host.<pid>.log
+
 <output_prefix>/
 ├── node0/
 │   └── rank0/d0/
@@ -265,8 +269,8 @@ parent-assigned node namespace:
         └── ...
 ```
 
-Host logs for these processes are stored in
-`<output_root>/host_logs/<session-id>/host.<pid>.log`.
+Host logs stay outside the capture tree; the `host_clock_alignment` files
+shown beneath each node stay with that capture.
 
 `nodeN` uses the stable worker id returned by `Worker.add_worker()`,
 `Worker.add_remote_worker()`, or `Worker.add_mpirun_worker_group()`; one

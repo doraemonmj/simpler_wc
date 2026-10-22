@@ -6,11 +6,13 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""Successive public calls select DFX granularity from their own descriptors."""
+"""Public DFX selections follow each invocation through owned and borrowed execution."""
 
 import array
+import csv
 import ctypes
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,7 +22,30 @@ from test_kernel_caller_stream import _callable
 from test_kernel_mode_c_api import _CallerContexts, _load
 
 
-def _run(arch, runtime, device, borrowed, root):
+def _check_swimlane(folder, level):
+    artifact = folder / "chip_swimlane_records.json"
+    data = json.loads(artifact.read_text())
+    assert data["chip_swimlane_level"] == level
+    assert data["aicore_tasks"]
+    if level >= 3:
+        assert any(data["scheduler_records"]), (level, data["scheduler_records"])
+    else:
+        assert "scheduler_records" not in data
+
+
+def _check_pmu(folder, level):
+    artifact = folder / "pmu.csv"
+    with artifact.open(newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        rows = list(reader)
+        assert rows, (level, artifact)
+        expected = int(os.environ.get("SIMPLER_PMU_EVENT_TYPE", str(level)))
+        assert {int(row["event_type"]) for row in rows} == {expected}
+        assert all(int(row["pmu_total_cycles"]) > 0 for row in rows), (level, rows)
+        assert reader.fieldnames and "run_epoch" in reader.fieldnames
+
+
+def _run(arch, runtime, device, borrowed, root, diagnostic):
     from simpler.task_interface import (  # noqa: PLC0415
         CallConfig,
         DataType,
@@ -58,9 +83,14 @@ def _run(arch, runtime, device, borrowed, root):
                 Tensor(backing, shapes=(count,), dtype=DataType.FLOAT32),
                 TensorArgType.INPUT if i < 2 else TensorArgType.OUTPUT_EXISTING,
             )
-        for level in (4, 1, 0, 3, 2):
+        levels = (2, 4, 0, 1, 2) if diagnostic == "pmu" else (4, 1, 0, 3, 2)
+        check_artifact = _check_pmu if diagnostic == "pmu" else _check_swimlane
+        for level in levels:
             config = CallConfig()
-            config.enable_chip_swimlane = level
+            if diagnostic == "pmu":
+                config.enable_pmu = level
+            else:
+                config.enable_chip_swimlane = level
             worker.submit(handle, args, config, caller_stream=stream.value).wait()
             capture = worker.capture_output_prefix
             result = array.array("f", [0.0]) * count
@@ -71,14 +101,8 @@ def _run(arch, runtime, device, borrowed, root):
                 assert capture is None
                 continue
             assert capture is not None
-            artifact = Path(capture) / "chip_swimlane_records.json"
-            data = json.loads(artifact.read_text())
-            assert data["chip_swimlane_level"] == level
-            assert data["aicore_tasks"]
-            if level >= 3:
-                assert any(data["scheduler_records"]), (level, data["scheduler_records"])
-            else:
-                assert "scheduler_records" not in data
+            folder = Path(capture)
+            check_artifact(folder, level)
     finally:
         # The caller stream may still hold a wait after the kernel boundaries.
         if stream.value:
@@ -94,6 +118,7 @@ def _run(arch, runtime, device, borrowed, root):
             contexts.close()
 
 
+@pytest.mark.parametrize(("diagnostic", "event_override"), [("swimlane", None), ("pmu", None), ("pmu", 4)])
 @pytest.mark.parametrize("borrowed", [False, True])
 @pytest.mark.parametrize(
     ("arch", "runtime"),
@@ -103,10 +128,25 @@ def _run(arch, runtime, device, borrowed, root):
         for runtime in ("host_build_graph", "tensormap_and_ringbuffer")
     ],
 )
-def test_worker_uses_each_invocations_swimlane_level(arch, runtime, borrowed, tmp_path, request):
+def test_worker_uses_each_invocations_selection(
+    arch, runtime, borrowed, diagnostic, event_override, tmp_path, request, monkeypatch
+):
+    if event_override is None:
+        monkeypatch.delenv("SIMPLER_PMU_EVENT_TYPE", raising=False)
+    else:
+        monkeypatch.setenv("SIMPLER_PMU_EVENT_TYPE", str(event_override))
     device = str(request.config.getoption("--device")).split("-")[0].split(",")[0]
     result = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve()), arch, runtime, device, str(int(borrowed)), str(tmp_path)],
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            arch,
+            runtime,
+            device,
+            str(int(borrowed)),
+            str(tmp_path),
+            diagnostic,
+        ],
         capture_output=True,
         text=True,
         timeout=240,
@@ -116,4 +156,4 @@ def test_worker_uses_each_invocations_swimlane_level(arch, runtime, borrowed, tm
 
 
 if __name__ == "__main__":
-    _run(sys.argv[1], sys.argv[2], int(sys.argv[3]), bool(int(sys.argv[4])), Path(sys.argv[5]))
+    _run(sys.argv[1], sys.argv[2], int(sys.argv[3]), bool(int(sys.argv[4])), Path(sys.argv[5]), sys.argv[6])
