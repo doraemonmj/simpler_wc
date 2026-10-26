@@ -115,6 +115,9 @@ list(APPEND HOST_RUNTIME_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../../common/platform/shared/host/scope_stats_retained_runs.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/comm_hccl.cpp"
 )
+if(SIMPLER_A5_ONBOARD_L0)
+    list(APPEND HOST_RUNTIME_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/l0_capture.cpp")
+endif()
 # Add common/aicpu_loader/host sources (LoadAicpuOp)
 list(APPEND HOST_RUNTIME_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../../../../common/aicpu_loader/host/load_aicpu_op.cpp"
@@ -290,6 +293,11 @@ target_link_libraries(host_runtime
         dl
         pthread
 )
+if(SIMPLER_A5_ONBOARD_L0)
+    target_link_directories(host_runtime PRIVATE
+        "${ASCEND_HOME_PATH}/${CMAKE_SYSTEM_PROCESSOR}-linux/devlib/linux/${CMAKE_SYSTEM_PROCESSOR}")
+    target_link_libraries(host_runtime PRIVATE ascend_hal)
+endif()
 
 target_link_directories(host_runtime
     PRIVATE

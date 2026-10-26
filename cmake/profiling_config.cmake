@@ -22,7 +22,8 @@ function(simpler_generate_profiling_header)
             SIMPLER_DFX
             SIMPLER_ORCH_PROFILING
             SIMPLER_SCHED_PROFILING
-            SIMPLER_TENSORMAP_PROFILING)
+            SIMPLER_TENSORMAP_PROFILING
+            SIMPLER_A5_ONBOARD_L0)
         if(DEFINED ${name} AND NOT "${${name}}" MATCHES "^[01]$")
             message(FATAL_ERROR "${name} must be 0 or 1")
         endif()
@@ -40,6 +41,9 @@ function(simpler_generate_profiling_header)
     if(NOT DEFINED SIMPLER_TENSORMAP_PROFILING)
         set(SIMPLER_TENSORMAP_PROFILING 0)
     endif()
+    if(NOT DEFINED SIMPLER_A5_ONBOARD_L0)
+        set(SIMPLER_A5_ONBOARD_L0 0)
+    endif()
 
     if(SIMPLER_ORCH_PROFILING AND NOT SIMPLER_DFX)
         message(FATAL_ERROR "SIMPLER_ORCH_PROFILING requires SIMPLER_DFX=1")
@@ -49,6 +53,9 @@ function(simpler_generate_profiling_header)
     endif()
     if(SIMPLER_TENSORMAP_PROFILING AND NOT SIMPLER_ORCH_PROFILING)
         message(FATAL_ERROR "SIMPLER_TENSORMAP_PROFILING requires SIMPLER_ORCH_PROFILING=1")
+    endif()
+    if(SIMPLER_A5_ONBOARD_L0 AND NOT SIMPLER_DFX)
+        message(FATAL_ERROR "SIMPLER_A5_ONBOARD_L0 requires SIMPLER_DFX=1")
     endif()
 
     set(generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")

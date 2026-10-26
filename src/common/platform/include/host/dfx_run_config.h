@@ -70,6 +70,7 @@ struct DfxRunConfig {
     bool pmu_enabled{false};
     bool dep_gen_enabled{false};
     bool scope_stats_enabled{false};
+    bool l0_enabled{false};
     std::string output_prefix;
 
     bool chip_swimlane_enabled() const { return chip_swimlane_level != ChipSwimlaneLevel::DISABLED; }
@@ -77,7 +78,8 @@ struct DfxRunConfig {
 
     /** Mirrors CallConfig::diagnostics_any(). */
     bool diagnostics_any() const {
-        return chip_swimlane_enabled() || dump_args_enabled() || pmu_enabled || dep_gen_enabled || scope_stats_enabled;
+        return chip_swimlane_enabled() || dump_args_enabled() || pmu_enabled || dep_gen_enabled ||
+               scope_stats_enabled || l0_enabled;
     }
 
     static DfxRunConfig from(const CallConfig &config) {
@@ -88,6 +90,7 @@ struct DfxRunConfig {
         resolved.pmu_event_type = resolve_pmu_event_type(config.enable_pmu);
         resolved.dep_gen_enabled = config.enable_dep_gen != 0;
         resolved.scope_stats_enabled = config.enable_scope_stats != 0;
+        resolved.l0_enabled = config.enable_l0 != 0;
         resolved.output_prefix = config.output_prefix;
         return resolved;
     }

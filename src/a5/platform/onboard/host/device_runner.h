@@ -59,6 +59,10 @@
 #include "aicpu_loader/host/load_aicpu_op.h"
 #include "runtime.h"
 #include "aicpu_topology_probe.h"
+#include "profiling_config.h"
+#if SIMPLER_A5_ONBOARD_L0
+#include "host/l0_capture.h"
+#endif
 
 // KernelArgsHelper is defined in
 // src/common/platform/onboard/host/device_runner_helpers.h (included above).
@@ -103,7 +107,12 @@ public:
     void abandon_prepared_execution(PreparedExecution &prepared) noexcept override;
     int poll_execution(const ActiveExecution &active) override;
     DrainOutcome drain_execution(ActiveExecution &active) override;
-    bool can_accept_run() const override { return !device_unusable_.load(std::memory_order_acquire); }
+    bool can_accept_run() const override {
+#if SIMPLER_A5_ONBOARD_L0
+        if (l0_capture_.active() || l0_capture_.unsafe()) return false;
+#endif
+        return !device_unusable_.load(std::memory_order_acquire);
+    }
 
     /**
      * Whether a run may be ordered behind another on this runner right now.
@@ -115,7 +124,12 @@ public:
      * the boundary events such an edge would name are exactly the resources a
      * poisoned runner has quarantined rather than proved retired.
      */
-    bool ready_to_join_launch() const override { return !device_unusable_.load(std::memory_order_acquire); }
+    bool ready_to_join_launch() const override {
+#if SIMPLER_A5_ONBOARD_L0
+        if (l0_capture_.active() || l0_capture_.unsafe()) return false;
+#endif
+        return !device_unusable_.load(std::memory_order_acquire);
+    }
 
     // `set_chip_swimlane_enabled`, `set_dump_args_enabled`,
     // `set_pmu_enabled`, `set_scope_stats_enabled`, `set_output_prefix`,
@@ -213,6 +227,9 @@ private:
     // dep_gen collector — captures orchestrator submit_task inputs for
     // offline replay. a5-specific (the base keeps dep_gen as a virtual hook).
     DepGenCollector dep_gen_collector_;
+#if SIMPLER_A5_ONBOARD_L0
+    simpler::a5::l0::Capture l0_capture_;
+#endif
 
     // `query_max_block_dim`, `validate_block_dim`, `ensure_binaries_loaded`,
     // `configure_aicore_op_timeout`, and `prepare_orch_so` are inherited

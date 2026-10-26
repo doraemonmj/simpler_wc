@@ -42,6 +42,7 @@
 #include "callable.h"
 #include "callable_protocol.h"
 #include "call_config.h"
+#include "profiling_config.h"
 #include "chip_callable_layout.h"
 #include "common/core_type.h"
 #include "common/host_api.h"
@@ -1934,6 +1935,9 @@ int DeviceRunnerBase::ensure_binaries_loaded(rtStream_t control_stream) {
     for (size_t i = 0; i < extra_count && extra != nullptr; ++i) {
         if (extra[i] != nullptr) extra_symbols.emplace_back(extra[i]);
     }
+#if SIMPLER_A5_ONBOARD_L0
+    extra_symbols.emplace_back("simpler_aicpu_l0_control");
+#endif
     rc = load_aicpu_op_.Init(extra_symbols);
     if (rc != 0) {
         LOG_ERROR("LoadAicpuOp::Init failed: %d", rc);

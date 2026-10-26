@@ -47,6 +47,7 @@ _PROFILING_DEFAULTS = {
     "SIMPLER_ORCH_PROFILING": 0,
     "SIMPLER_SCHED_PROFILING": 0,
     "SIMPLER_TENSORMAP_PROFILING": 0,
+    "SIMPLER_A5_ONBOARD_L0": 0,
 }
 
 
@@ -62,6 +63,8 @@ def _profiling_config(values: dict[str, Optional[int]]) -> Optional[dict[str, st
         raise ValueError("SIMPLER_SCHED_PROFILING requires SIMPLER_DFX=1")
     if config["SIMPLER_TENSORMAP_PROFILING"] and not config["SIMPLER_ORCH_PROFILING"]:
         raise ValueError("SIMPLER_TENSORMAP_PROFILING requires SIMPLER_ORCH_PROFILING=1")
+    if config["SIMPLER_A5_ONBOARD_L0"] and not config["SIMPLER_DFX"]:
+        raise ValueError("SIMPLER_A5_ONBOARD_L0 requires SIMPLER_DFX=1")
     return {name: str(value) for name, value in config.items()}
 
 
@@ -254,6 +257,7 @@ def main():
     parser.add_argument("--profiling-orch", type=int, choices=(0, 1), default=None)
     parser.add_argument("--profiling-sched", type=int, choices=(0, 1), default=None)
     parser.add_argument("--profiling-tensormap", type=int, choices=(0, 1), default=None)
+    parser.add_argument("--profiling-a5-l0", type=int, choices=(0, 1), default=None)
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -284,6 +288,7 @@ def main():
                 "SIMPLER_ORCH_PROFILING": args.profiling_orch,
                 "SIMPLER_SCHED_PROFILING": args.profiling_sched,
                 "SIMPLER_TENSORMAP_PROFILING": args.profiling_tensormap,
+                "SIMPLER_A5_ONBOARD_L0": args.profiling_a5_l0,
             }
         ),
     )

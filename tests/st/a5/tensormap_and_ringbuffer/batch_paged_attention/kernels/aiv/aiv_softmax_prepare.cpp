@@ -30,6 +30,7 @@
 #include "tensor.h"
 
 #include "pipe_sync.h"
+#include "../l0_marker_hook.h"
 
 #ifndef __gm__
 #define __gm__
@@ -156,6 +157,7 @@ static __aicore__ void softmax_prepare_batch_impl(
 }
 
 extern "C" __aicore__ void kernel_entry(__gm__ int64_t *args) {
+    SIMPLER_PA_L0_MARK_BEGIN();
     __gm__ Tensor *sij_batch = reinterpret_cast<__gm__ Tensor *>(args[0]);
     __gm__ Tensor *context_lens_t = reinterpret_cast<__gm__ Tensor *>(args[1]);
     __gm__ Tensor *pij_batch = reinterpret_cast<__gm__ Tensor *>(args[2]);
@@ -187,4 +189,5 @@ extern "C" __aicore__ void kernel_entry(__gm__ int64_t *args) {
             sij_batch, context_lens_t, pij_batch, mij_batch, lij_batch, scale_value, batch_count, block_idx, batch_start
         );
     }
+    SIMPLER_PA_L0_MARK_END();
 }

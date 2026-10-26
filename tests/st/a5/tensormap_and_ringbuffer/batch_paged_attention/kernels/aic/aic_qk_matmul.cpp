@@ -27,6 +27,7 @@
 #include "tensor.h"
 
 #include "pipe_sync.h"
+#include "../l0_marker_hook.h"
 
 #ifndef __gm__
 #define __gm__
@@ -112,6 +113,7 @@ static __aicore__ void qk_matmul_batch_impl(
 }
 
 extern "C" __aicore__ void kernel_entry(__gm__ int64_t *args) {
+    SIMPLER_PA_L0_MARK_BEGIN();
     __gm__ Tensor *query = reinterpret_cast<__gm__ Tensor *>(args[0]);
     __gm__ Tensor *key_cache = reinterpret_cast<__gm__ Tensor *>(args[1]);
     __gm__ Tensor *block_table_t = reinterpret_cast<__gm__ Tensor *>(args[2]);
@@ -148,4 +150,5 @@ extern "C" __aicore__ void kernel_entry(__gm__ int64_t *args) {
             batch_start
         );
     }
+    SIMPLER_PA_L0_MARK_END();
 }

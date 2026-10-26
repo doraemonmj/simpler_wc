@@ -444,6 +444,7 @@ def decode_call_config(reader: _Reader) -> CallConfig:
     cfg.enable_pmu = reader.i32()
     cfg.enable_dep_gen = bool(reader.i32())
     cfg.enable_scope_stats = bool(reader.i32())
+    cfg.enable_l0 = bool(reader.i32())
     prefix = reader.string(MAX_STRING_BYTES, "CallConfig.output_prefix")
     cfg.output_prefix = prefix
     return cfg

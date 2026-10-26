@@ -32,6 +32,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -381,6 +382,20 @@ int DeviceRunner::prepare_execution(
     // apply_call_config() is skipped when this prepare overlaps an in-flight
     // predecessor, so the members still describe that predecessor.
     DfxRunConfig &dfx = execution->dfx;
+#if SIMPLER_A5_ONBOARD_L0
+    if (dfx.l0_enabled) std::fprintf(stderr, "L0 prepare: device=%d epoch=%llu\n", device_id_,
+                                     static_cast<unsigned long long>(identity.run_epoch));
+    if (dfx.l0_enabled && (dfx.pmu_enabled || execution_mode_latch_.is_kernel() || device_id_ != 0 ||
+                           l0_capture_.ever_started() || l0_capture_.unsafe())) {
+        LOG_ERROR("L0: first version supports one device-0 host run without PMU");
+        return PTO_RUNTIME_ERR_INTERNAL;
+    }
+#else
+    if (dfx.l0_enabled) {
+        LOG_ERROR("L0 capture is unavailable in this build");
+        return PTO_RUNTIME_ERR_INTERNAL;
+    }
+#endif
     execution->resources_owned = true;
     auto prepare_rollback = RAIIScopeGuard([this, &execution]() {
         cleanup_execution(*execution, /*launched=*/false);
@@ -564,6 +579,10 @@ LaunchTransactionResult DeviceRunner::launch_execution_impl(PreparedExecution &p
     LaunchTransactionResult transaction = exact_launch_transaction(
         prepared.identity, std::move(permit),
         [&](LaunchProgressSink &sink) -> int {
+#if SIMPLER_A5_ONBOARD_L0
+            if (prepared.dfx.l0_enabled && prepared.join.predecessor_owner != nullptr)
+                return SIMPLER_RUNTIME_ERR_DIAGNOSTIC_CAPACITY_FULL;
+#endif
             // Arming precedes any execution-visible submission, so its failures —
             // including a thread-spawn or allocation throw — are reported as an rc
             // and leave the run safely rollback-able. Taking the completion fence
@@ -626,6 +645,21 @@ LaunchTransactionResult DeviceRunner::launch_execution_impl(PreparedExecution &p
                 if (!core_types.empty()) {
                     chip_swimlane_collector_.set_core_types(core_types.data(), num_aicore);
                 }
+
+#if SIMPLER_A5_ONBOARD_L0
+                if (prepared.dfx.l0_enabled) {
+                    std::fprintf(stderr, "L0 launch: arming channel %u\n", simpler::a5::l0::kChannel);
+                    auto launch = [this](rtStream_t stream, void *args, size_t bytes, int threads,
+                                         const std::string &name) {
+                        return launch_aicpu_payload(stream, args, bytes, name.c_str(), threads);
+                    };
+                    if (l0_capture_.begin(device_id_, aicore_ctrl_reg_table_dev_, streams.aicpu, launch,
+                                          prepared.dfx.output_prefix, prepared.identity.run_epoch) != 0) {
+                        LOG_ERROR("L0: unable to arm capture; ST continues if GM is safe");
+                        if (l0_capture_.unsafe()) return PTO_RUNTIME_ERR_INTERNAL;
+                    }
+                }
+#endif
 
                 // Launch the AICore worker BEFORE the AICPU Run task. This is a first-launch
                 // latency optimization, not a correctness requirement (the handshake is
@@ -811,6 +845,17 @@ DrainOutcome DeviceRunner::drain_execution(ActiveExecution &active) {
 
     read_device_wall_ns(prepared.pipeline_slot);
 
+#if SIMPLER_A5_ONBOARD_L0
+    if (prepared.dfx.l0_enabled && l0_capture_.active()) {
+        auto launch = [this](rtStream_t stream, void *args, size_t bytes, int threads,
+                             const std::string &name) {
+            return launch_aicpu_payload(stream, args, bytes, name.c_str(), threads);
+        };
+        const int l0_rc = l0_capture_.finish(prepared.streams.aicpu, launch);
+        if (l0_rc != 0) LOG_ERROR("L0: capture/export failed (rc=%d); ST result remains independent", l0_rc);
+    }
+#endif
+
     // Both this run's boundaries completed, so every wait queued on one of them
     // is discharged here — before anything this run owns is released, and while
     // a fallible call can still report. Nothing waits on a successor's kernels:
@@ -916,6 +961,9 @@ void DeviceRunner::emit_device_dep_gen_graph(
 
 void DeviceRunner::cleanup_execution(PreparedExecution &prepared, bool launched) noexcept {
     if (!prepared.resources_owned) return;
+#if SIMPLER_A5_ONBOARD_L0
+    if (l0_capture_.active()) l0_capture_.abandon();
+#endif
 
     // Before anything is released, and before the poison is read: a queued
     // stream wait naming one of this run's boundaries must not outlive the
@@ -1255,7 +1303,11 @@ int DeviceRunner::finalize_impl() {
         // once per attempt and then report a reset that "did not confirm
         // clean", which reads as a failed reset rather than the designed
         // refusal it is.
-        const bool owns_device_reset = !execution_mode_latch().is_kernel();
+        bool owns_device_reset = !execution_mode_latch().is_kernel();
+#if SIMPLER_A5_ONBOARD_L0
+        LOG_ERROR("L0 probe build: suppressing automatic force reset; device resources are quarantined");
+        owns_device_reset = false;
+#endif
         int reset_rc = owns_device_reset ? attempt_fatal_reset(
                                                [this]() {
                                                    return force_reset_device();

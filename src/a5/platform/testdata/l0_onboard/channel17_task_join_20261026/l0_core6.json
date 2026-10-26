@@ -1,0 +1,1 @@
+{"schema":"l0_onboard_trace_v1","device":0,"channel":17,"physical_core":6,"run_epoch":1,"source":"live","disarmed":true,"valid_bytes":544,"capture_start_offset":256,"captured_bytes":288,"events":[{"pipe":0,"region":10,"block":6,"cycle":325969270007703,"byte_offset":480},{"pipe":0,"region":11,"block":6,"cycle":325969270007713,"byte_offset":484}]}

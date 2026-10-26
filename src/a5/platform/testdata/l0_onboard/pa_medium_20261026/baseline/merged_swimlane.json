@@ -1,0 +1,465 @@
+{
+  "traceEvents": [
+    {
+      "args": {
+        "name": "Worker View"
+      },
+      "cat": "__metadata",
+      "name": "process_name",
+      "ph": "M",
+      "pid": 4
+    },
+    {
+      "args": {
+        "sort_index": 4
+      },
+      "cat": "__metadata",
+      "name": "process_sort_index",
+      "ph": "M",
+      "pid": 4
+    },
+    {
+      "args": {
+        "name": "AIC_0"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10000
+    },
+    {
+      "args": {
+        "name": "AIC_1"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10010
+    },
+    {
+      "args": {
+        "name": "AIC_2"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10020
+    },
+    {
+      "args": {
+        "name": "AIC_3"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10030
+    },
+    {
+      "args": {
+        "name": "AIC_4"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10040
+    },
+    {
+      "args": {
+        "name": "AIC_7"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10070
+    },
+    {
+      "args": {
+        "name": "AIC_8"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10080
+    },
+    {
+      "args": {
+        "name": "AIC_12"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10120
+    },
+    {
+      "args": {
+        "name": "AIV_36"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10360
+    },
+    {
+      "args": {
+        "name": "AIV_38"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10380
+    },
+    {
+      "args": {
+        "name": "AIV_40"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10400
+    },
+    {
+      "args": {
+        "name": "AIV_42"
+      },
+      "cat": "__metadata",
+      "name": "thread_name",
+      "ph": "M",
+      "pid": 4,
+      "tid": 10420
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t0, FuncId:-1, CoreId:0",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 13.865,
+        "kernel-duration-us": 7.8020000000000005,
+        "local_setup_us": 6.063,
+        "taskId": 8589934592,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 0,
+      "name": "task(r2t0)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10000,
+      "ts": 0.0,
+      "dur": 13.865
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t1, FuncId:-1, CoreId:38",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 8.11,
+        "kernel-duration-us": 5.774000000000001,
+        "local_setup_us": 2.3359999999999985,
+        "taskId": 8589934593,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 1,
+      "name": "task(r2t1)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10380,
+      "ts": 30.121000000000002,
+      "dur": 8.11
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t2, FuncId:-1, CoreId:7",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 7.9339999999999975,
+        "kernel-duration-us": 5.341999999999999,
+        "local_setup_us": 2.5919999999999987,
+        "taskId": 8589934594,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 2,
+      "name": "task(r2t2)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10070,
+      "ts": 45.215,
+      "dur": 7.9339999999999975
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t3, FuncId:-1, CoreId:42",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 4.140000000000001,
+        "kernel-duration-us": 3.1000000000000014,
+        "local_setup_us": 1.0399999999999991,
+        "taskId": 8589934595,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 3,
+      "name": "task(r2t3)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10420,
+      "ts": 57.855000000000004,
+      "dur": 4.140000000000001
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t4, FuncId:-1, CoreId:4",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 13.863,
+        "kernel-duration-us": 7.79,
+        "local_setup_us": 6.073,
+        "taskId": 8589934596,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 4,
+      "name": "task(r2t4)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10040,
+      "ts": 0.162,
+      "dur": 13.863
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t5, FuncId:-1, CoreId:36",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 7.225000000000001,
+        "kernel-duration-us": 5.329000000000001,
+        "local_setup_us": 1.8960000000000008,
+        "taskId": 8589934597,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 5,
+      "name": "task(r2t5)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10360,
+      "ts": 31.179000000000002,
+      "dur": 7.225000000000001
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t6, FuncId:-1, CoreId:1",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 7.542000000000002,
+        "kernel-duration-us": 5.7010000000000005,
+        "local_setup_us": 1.841000000000001,
+        "taskId": 8589934598,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 6,
+      "name": "task(r2t6)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10010,
+      "ts": 45.729,
+      "dur": 7.542000000000002
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t7, FuncId:-1, CoreId:42",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 4.581999999999994,
+        "kernel-duration-us": 3.714999999999989,
+        "local_setup_us": 0.8670000000000044,
+        "taskId": 8589934599,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 7,
+      "name": "task(r2t7)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10420,
+      "ts": 66.146,
+      "dur": 4.581999999999994
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t8, FuncId:-1, CoreId:8",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 13.645000000000001,
+        "kernel-duration-us": 7.898000000000001,
+        "local_setup_us": 5.747,
+        "taskId": 8589934600,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 8,
+      "name": "task(r2t8)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10080,
+      "ts": 0.296,
+      "dur": 13.645000000000001
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t9, FuncId:-1, CoreId:42",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 10.286999999999995,
+        "kernel-duration-us": 7.597999999999995,
+        "local_setup_us": 2.689,
+        "taskId": 8589934601,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 9,
+      "name": "task(r2t9)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10420,
+      "ts": 23.827,
+      "dur": 10.286999999999995
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t10, FuncId:-1, CoreId:3",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 9.015999999999998,
+        "kernel-duration-us": 6.628999999999998,
+        "local_setup_us": 2.3870000000000005,
+        "taskId": 8589934602,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 10,
+      "name": "task(r2t10)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10030,
+      "ts": 40.197,
+      "dur": 9.015999999999998
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t11, FuncId:-1, CoreId:42",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 4.799999999999997,
+        "kernel-duration-us": 3.7620000000000005,
+        "local_setup_us": 1.0379999999999967,
+        "taskId": 8589934603,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 11,
+      "name": "task(r2t11)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10420,
+      "ts": 74.685,
+      "dur": 4.799999999999997
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t12, FuncId:-1, CoreId:12",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 13.747000000000002,
+        "kernel-duration-us": 7.953000000000001,
+        "local_setup_us": 5.794,
+        "taskId": 8589934604,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 12,
+      "name": "task(r2t12)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10120,
+      "ts": 0.40800000000000003,
+      "dur": 13.747000000000002
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t13, FuncId:-1, CoreId:40",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 9.432000000000002,
+        "kernel-duration-us": 6.459000000000003,
+        "local_setup_us": 2.972999999999999,
+        "taskId": 8589934605,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 13,
+      "name": "task(r2t13)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10400,
+      "ts": 26.923000000000002,
+      "dur": 9.432000000000002
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t14, FuncId:-1, CoreId:2",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 8.156000000000006,
+        "kernel-duration-us": 5.9040000000000035,
+        "local_setup_us": 2.2520000000000024,
+        "taskId": 8589934606,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 14,
+      "name": "task(r2t14)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10020,
+      "ts": 44.028,
+      "dur": 8.156000000000006
+    },
+    {
+      "args": {
+        "event-hint": "Task:r2t15, FuncId:-1, CoreId:42",
+        "fanout-hint": "0: []",
+        "fanin-hint": "0: []",
+        "duration-us": 5.275000000000006,
+        "kernel-duration-us": 4.302000000000007,
+        "local_setup_us": 0.972999999999999,
+        "taskId": 8589934607,
+        "run_epoch": 1
+      },
+      "cat": "event",
+      "id": 15,
+      "name": "task(r2t15)",
+      "ph": "X",
+      "pid": 4,
+      "tid": 10420,
+      "ts": 83.893,
+      "dur": 5.275000000000006
+    }
+  ],
+  "metadata": {
+    "runtime": "tensormap_and_ringbuffer"
+  }
+}

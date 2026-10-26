@@ -684,6 +684,7 @@ struct ChipRunLaneState {
         if (pred.enable_pmu != succ.enable_pmu) return false;
         if (pred.enable_dep_gen != succ.enable_dep_gen) return false;
         if (pred.enable_scope_stats != succ.enable_scope_stats) return false;
+        if (pred.enable_l0 != succ.enable_l0) return false;
         return worker->supports_joined_diagnostic_launch(successor.native_run, predecessor.native_run);
     }
 

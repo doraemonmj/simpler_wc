@@ -52,7 +52,8 @@ logger = logging.getLogger(__name__)
 _compile_cache: dict[tuple, object] = {}
 
 _CASE_CONFIG_KEYS = frozenset(
-    {"aicpu_thread_num", "runtime_env", "device_count", "num_sub_workers", "launch_depth", "pipeline_depth"}
+    {"aicpu_thread_num", "runtime_env", "device_count", "num_sub_workers", "launch_depth", "pipeline_depth",
+     "enable_l0", "enable_chip_swimlane"}
 )
 _TORCH_BACKEND_AUTOLOAD_ENV = "TORCH_DEVICE_BACKEND_AUTOLOAD"
 _TORCH_BACKEND_AUTOLOAD_VALUE_LIMIT = 64
@@ -1577,6 +1578,7 @@ def finalize_diagnostic_outputs(
     *,
     callable_spec: dict | None = None,
     chip_swimlane: int = 0,
+    l0: bool = False,
     dep_gen: bool = False,
     scope_stats: bool = False,
     swimlane_overhead: bool = False,
@@ -1586,6 +1588,10 @@ def finalize_diagnostic_outputs(
     rank_capture_dirs = _rank_capture_dirs(prefix)
     if chip_swimlane:
         _convert_case_swimlane(case_label, prefix, callable_spec=callable_spec, enable_overhead=swimlane_overhead)
+    if l0 and (prefix / "l0_survey.json").is_file() and (prefix / "chip_swimlane_records.json").is_file():
+        from .tools.l0_task_join import join  # noqa: PLC0415
+
+        join(prefix)
     if dep_gen:
         dep_targets = [path for path in rank_capture_dirs if (path / "deps.json").is_file()]
         if dep_targets:
@@ -1664,11 +1670,15 @@ def run_class_cases(  # noqa: PLR0913 -- shared layer-5 entry; kwargs mirror CLI
     )
     for case in cases:
         case_label = f"{cls_name}_{case['name']}"
+        case_l0 = bool(case.get("config", {}).get("enable_l0", False))
+        case_chip_swimlane = max(enable_chip_swimlane, int(case.get("config", {}).get("enable_chip_swimlane", 0)))
+        if case_l0 and rounds != 1:
+            raise ValueError("L0 first version supports one run per worker")
         # Per-case directory the runtime writes into. Required (non-empty) when
         # any diagnostic flag is on; CallConfig::validate() throws otherwise.
         # scope_stats writes below the per-case output prefix, so it uses the
         # same output-prefix allocation as the other diagnostics.
-        prefix = build_output_prefix(case_label) if diagnostics_on else Path("")
+        prefix = build_output_prefix(case_label) if diagnostics_on or case_l0 or case_chip_swimlane else Path("")
         try:
             cls_inst._run_and_validate(
                 worker,
@@ -1677,12 +1687,12 @@ def run_class_cases(  # noqa: PLR0913 -- shared layer-5 entry; kwargs mirror CLI
                 sub_handles=sub_handles,
                 rounds=rounds,
                 skip_golden=skip_golden,
-                enable_chip_swimlane=enable_chip_swimlane,
+                enable_chip_swimlane=case_chip_swimlane,
                 enable_dump_args=enable_dump_args,
                 enable_pmu=enable_pmu,
                 enable_dep_gen=enable_dep_gen,
                 enable_scope_stats=enable_scope_stats,
-                output_prefix=str(prefix) if diagnostics_on else "",
+                output_prefix=str(prefix) if diagnostics_on or case_l0 or case_chip_swimlane else "",
             )
         except Exception as exc:
             _name_failing_case(exc, cls_name, case["name"])
@@ -1692,7 +1702,8 @@ def run_class_cases(  # noqa: PLR0913 -- shared layer-5 entry; kwargs mirror CLI
                 case_label,
                 prefix,
                 callable_spec=callable_spec,
-                chip_swimlane=enable_chip_swimlane,
+                chip_swimlane=case_chip_swimlane,
+                l0=case_l0,
                 dep_gen=enable_dep_gen,
                 scope_stats=enable_scope_stats,
                 swimlane_overhead=enable_swimlane_overhead,
@@ -2132,6 +2143,7 @@ class SceneTestCase:
         config.enable_pmu = enable_pmu  # 0=disabled, >0=enabled with event type
         config.enable_dep_gen = enable_dep_gen
         config.enable_scope_stats = enable_scope_stats
+        config.enable_l0 = bool(config_dict.get("enable_l0", False))
         # `output_prefix` is required by CallConfig::validate() whenever any
         # diagnostic flag is enabled. Caller threads it down from the per-case
         # directory built by build_output_prefix().

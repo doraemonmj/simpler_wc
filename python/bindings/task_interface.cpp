@@ -3488,6 +3488,11 @@ NB_MODULE(_task_interface, m) {
             }
         )
         .def_prop_rw(
+            "enable_l0",
+            [](const CallConfig &c) { return static_cast<bool>(c.enable_l0); },
+            [](CallConfig &c, bool v) { c.enable_l0 = v ? 1 : 0; }
+        )
+        .def_prop_rw(
             "output_prefix",
             [](const CallConfig &c) -> std::string {
                 return std::string(c.output_prefix, ::strnlen(c.output_prefix, sizeof(c.output_prefix)));
@@ -3509,7 +3514,8 @@ NB_MODULE(_task_interface, m) {
                << ", enable_chip_swimlane=" << self.enable_chip_swimlane
                << ", enable_dump_args=" << self.enable_dump_args << ", enable_pmu=" << self.enable_pmu
                << ", enable_dep_gen=" << (self.enable_dep_gen ? "True" : "False")
-               << ", enable_scope_stats=" << (self.enable_scope_stats ? "True" : "False");
+               << ", enable_scope_stats=" << (self.enable_scope_stats ? "True" : "False")
+               << ", enable_l0=" << (self.enable_l0 ? "True" : "False");
             if (self.runtime_env.any()) {
                 append_ring_values(os, "runtime_env.ring_task_window", true, self.runtime_env.ring_task_window);
                 append_ring_values(os, "runtime_env.ring_heap", true, self.runtime_env.ring_heap);

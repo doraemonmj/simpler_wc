@@ -117,12 +117,13 @@ struct CallConfig {
     int32_t enable_pmu = 0;  // 0 = disabled; >0 = enabled, value selects event type
     int32_t enable_dep_gen = 0;
     int32_t enable_scope_stats = 0;  // writes <output_prefix>/scope_stats/scope_stats.jsonl
+    int32_t enable_l0 = 0;  // a5 onboard L0 capture; unavailable without SIMPLER_A5_ONBOARD_L0
     RuntimeEnv runtime_env;          // per-task ring sizing
     char output_prefix[1024] = {};
 
     bool diagnostics_any() const noexcept {
         return enable_chip_swimlane != 0 || enable_dump_args != 0 || enable_pmu != 0 || enable_dep_gen != 0 ||
-               enable_scope_stats != 0;
+               enable_scope_stats != 0 || enable_l0 != 0;
     }
 
     bool output_prefix_set() const noexcept { return output_prefix[0] != '\0'; }
@@ -136,7 +137,7 @@ struct CallConfig {
             throw std::invalid_argument(
                 "CallConfig: output_prefix must be set whenever any of "
                 "enable_chip_swimlane / enable_dump_args / enable_pmu / enable_dep_gen / "
-                "enable_scope_stats is enabled"
+                "enable_scope_stats / enable_l0 is enabled"
             );
         }
         runtime_env.validate();
@@ -145,6 +146,6 @@ struct CallConfig {
 #pragma pack(pop)
 static_assert(sizeof(RuntimeEnv) == RUNTIME_ENV_UINT64_FIELD_COUNT * sizeof(uint64_t), "RuntimeEnv wire layout drift");
 static_assert(
-    sizeof(CallConfig) == 6 * sizeof(int32_t) + RUNTIME_ENV_UINT64_FIELD_COUNT * sizeof(uint64_t) + 1024,
+    sizeof(CallConfig) == 7 * sizeof(int32_t) + RUNTIME_ENV_UINT64_FIELD_COUNT * sizeof(uint64_t) + 1024,
     "CallConfig wire layout drift"
 );

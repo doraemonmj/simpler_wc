@@ -31,6 +31,7 @@
 #include "tensor.h"
 
 #include "pipe_sync.h"
+#include "../l0_marker_hook.h"
 
 #ifndef __gm__
 #define __gm__
@@ -184,6 +185,7 @@ static __aicore__ void online_update_batch_impl(
 }
 
 extern "C" __aicore__ void kernel_entry(__gm__ int64_t *args) {
+    SIMPLER_PA_L0_MARK_BEGIN();
     __gm__ Tensor *mij_batch = reinterpret_cast<__gm__ Tensor *>(args[0]);
     __gm__ Tensor *lij_batch = reinterpret_cast<__gm__ Tensor *>(args[1]);
     __gm__ Tensor *oi_new_batch = reinterpret_cast<__gm__ Tensor *>(args[2]);
@@ -222,4 +224,5 @@ extern "C" __aicore__ void kernel_entry(__gm__ int64_t *args) {
             q_offset, num_heads, batch_start
         );
     }
+    SIMPLER_PA_L0_MARK_END();
 }

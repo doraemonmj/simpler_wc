@@ -374,6 +374,34 @@ def test_swimlane_overhead_allocates_a_diagnostic_output_prefix(monkeypatch) -> 
     assert captured["output_prefix"] == str(output_prefix)
 
 
+def test_l0_case_collects_task_records_and_runs_join_postprocessor(monkeypatch) -> None:
+    scene_test_module = importlib.import_module("simpler_setup.scene_test")
+    output_prefix = scene_test_module.Path("l0-demo-output")
+    captured = {}
+
+    class FakeScene:
+        def _run_and_validate(self, *_args, **kwargs):
+            captured["run"] = kwargs
+
+    monkeypatch.setattr(scene_test_module, "build_output_prefix", lambda _case_label: output_prefix)
+    monkeypatch.setattr(
+        scene_test_module, "finalize_diagnostic_outputs", lambda *_args, **kwargs: captured.update(finalize=kwargs)
+    )
+
+    run_class_cases(
+        object(), FakeScene(),
+        [{"name": "demo", "config": {"enable_l0": True, "enable_chip_swimlane": 1}}],
+        callable_obj=object(), sub_handles={}, rounds=1, skip_golden=False,
+        enable_chip_swimlane=0, enable_dump_args=0, enable_pmu=0,
+        enable_dep_gen=False, enable_scope_stats=False,
+    )
+
+    assert captured["run"]["enable_chip_swimlane"] == 1
+    assert captured["run"]["output_prefix"] == str(output_prefix)
+    assert captured["finalize"]["chip_swimlane"] == 1
+    assert captured["finalize"]["l0"] is True
+
+
 def test_run_class_cases_reports_the_failing_case_name() -> None:
     class FailingScene:
         def _run_and_validate(self, *_args, **_kwargs):

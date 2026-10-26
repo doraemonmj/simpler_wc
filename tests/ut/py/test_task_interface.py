@@ -1201,7 +1201,7 @@ class TestRemoteL3SessionTaskArgsMaterialization:
         from simpler.remote_l3_protocol import decode_task_payload
 
         prefix = b"/tmp/remote-scope"
-        config = struct.pack("<iiiiii", 5, 0, 0, 0, 0, 1) + struct.pack("<I", len(prefix)) + prefix
+        config = struct.pack("<iiiiiii", 5, 0, 0, 0, 0, 1, 1) + struct.pack("<I", len(prefix)) + prefix
         args = struct.pack("<III", 0, 0, 0)
         wire = (b"\xab" * 32) + config + args
 
@@ -1209,6 +1209,7 @@ class TestRemoteL3SessionTaskArgsMaterialization:
 
         assert payload.config.aicpu_thread_num == 5
         assert payload.config.enable_scope_stats is True
+        assert payload.config.enable_l0 is True
         assert payload.config.output_prefix == prefix.decode()
 
     def test_host_inline_descriptor_materializes_local_tensor_data(self):
