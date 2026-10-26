@@ -85,14 +85,38 @@ allocating GM, or writing perfmon registers (`task_20261026_112650_765462`):
 
 Thus an extra stop and a successful ACL process-level reset did not restore
 channel 12. The meaning of stop return value `30` is not documented in the
-installed public profiling header, so it is not evidence that the remote
-channel remained open. [CANN's `aclrtResetDevice` documentation](https://www.hiascend.com/doc_center/source/en/CANNCommunityEdition/900/API/runtimeapi/aclcppdevg_03_0040.html)
+installed public profiling header. Disassembly of this driver build shows
+that `prof_chan_stop` returns `30` at its local channel-state check, before
+calling the registered stop handler; this attempt did not submit a remote
+stop event. It does not prove whether the remote channel remained open.
+[CANN's `aclrtResetDevice` documentation](https://www.hiascend.com/doc_center/source/en/CANNCommunityEdition/900/API/runtimeapi/aclcppdevg_03_0040.html)
 describes release of the caller's contexts and streams; process exit already
 does this. This probe does not establish whether profiling state persists in
-the driver, firmware, or device service. It did not perform a force, PCIe, or
-server reset. A subsequent ordinary vector ST passed in 8.17 s under the same
-device lock (`task_20261026_112930_771718`), confirming the normal onboard
-path still worked after the probe.
+the driver, firmware, or device service. This first probe did not perform a
+force, PCIe, or server reset. A subsequent ordinary vector ST passed in 8.17 s
+under the device lock (`task_20261026_112930_771718`), confirming the normal
+onboard path still worked after the probe.
+
+A second bounded channel-12 probe changed only `prof_start_para.real_time`
+from `PROF_REAL` to the public `PROF_NON_REAL` mode, using the same BIU user
+data and no kernel (`task_20261026_113422_775472`).
+`prof_drv_start(0, 12)` still returned `-1`; `aclrtResetDevice` and
+`aclFinalize` both returned `0`. Mode selection did not recover the consumed
+channel. The installed public HAL header exposes start, stop, read, poll, and
+flush for profiling channels, but no per-channel reset or remote-state query.
+The private `prof_urma_stop` symbol requires internal session pointers, so it
+was not called directly. A full device/PCIe reset was not attempted on this
+fragile EVB.
+
+With no other process holding `/dev/davinci0`, one locked probe also tested
+the public ACL force variant (`task_20261026_113605_777185`). Baseline
+`prof_drv_start(0, 12)` returned `-1`; `aclrtResetDeviceForce(0)` returned
+`0` in 4.94 s; rebind returned `0`; another `prof_drv_start(0, 12)` returned
+`-1`. Final normal ACL cleanup returned `0`. A subsequent ordinary vector ST
+passed in 6.48 s (`task_20261026_113739_782020`). Therefore neither ACL
+reset variant restored the consumed BIU channel in this test. The force API
+releases runtime device resources; it is not a demonstrated reset of remote
+profiling-channel state. No PCIe/hardware or server reset was performed.
 
 ## Ordinary onboard health check, 2026-10-23
 
