@@ -67,6 +67,33 @@ kernel. Only then can raw record decoding, DMA completion, and buffer
 ownership be tested for
 [issue #905](https://github.com/hw-native-sys/simpler/issues/905).
 
+## Process-level channel recovery probe, 2026-10-26
+
+The host had not rebooted since October 22. Under the device-0 lock, a bounded
+probe used the previously consumed BIU channel 12 without launching a kernel,
+allocating GM, or writing perfmon registers (`task_20261026_112650_765462`):
+
+| Operation | Return value |
+| --- | ---: |
+| `prof_drv_start(0, 12)` | `-1` |
+| `prof_stop(0, 12)` after failed start | `30` |
+| `prof_drv_start(0, 12)` after stop | `-1` |
+| `aclrtResetDevice(0)` | `0` |
+| `aclrtSetDevice(0)` after reset | `0` |
+| `prof_drv_start(0, 12)` after reset | `-1` |
+| Final `aclrtResetDevice(0)` and `aclFinalize()` | both `0` |
+
+Thus an extra stop and a successful ACL process-level reset did not restore
+channel 12. The meaning of stop return value `30` is not documented in the
+installed public profiling header, so it is not evidence that the remote
+channel remained open. [CANN's `aclrtResetDevice` documentation](https://www.hiascend.com/doc_center/source/en/CANNCommunityEdition/900/API/runtimeapi/aclcppdevg_03_0040.html)
+describes release of the caller's contexts and streams; process exit already
+does this. This probe does not establish whether profiling state persists in
+the driver, firmware, or device service. It did not perform a force, PCIe, or
+server reset. A subsequent ordinary vector ST passed in 8.17 s under the same
+device lock (`task_20261026_112930_771718`), confirming the normal onboard
+path still worked after the probe.
+
 ## Ordinary onboard health check, 2026-10-23
 
 Ran the existing small vector scene test on device 0:
