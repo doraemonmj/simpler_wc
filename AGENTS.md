@@ -15,3 +15,11 @@
 - If relevant files under `.claude/rules/` or `.claude/skills/` change, refresh your context before proceeding.
 - If user instructions conflict with repository conventions, prioritize user intent for that task.
 - Higher-priority system/developer/user instructions override this guide.
+
+## Personal study branch
+
+On `codex/simpler-repo-study`, changes to personal study material under `dfx-study/`
+do not require pre-commit hooks or tests. Do not add or run test cases for these
+documentation changes unless the user explicitly asks. Review the staged file
+list before committing, and keep this exception scoped to this branch and its
+study material.
