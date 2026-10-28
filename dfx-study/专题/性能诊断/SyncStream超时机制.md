@@ -148,6 +148,29 @@ event 等待超时返回 `ACL_ERROR_RT_EVENT_SYNC_TIMEOUT`（507047）；stream 
 
 ## 4. 张量数据依赖等待超时
 
+编排代码调用 `get_tensor_data()` 时，等生产任务写完再读；调用 `set_tensor_data()` 时，还要等消费者读完再写，避免读到未完成的数据或覆盖正在被读取的数据。**超时用于结束卡住的等待，并指出是哪项依赖没完成。**逻辑简写如下：
+
+~~~cpp
+auto start = get_sys_cnt_aicpu();
+while (slot.task_state.load() < CHIP_TASK_COMPLETED) {
+    if (get_sys_cnt_aicpu() - start > TENSOR_DATA_TIMEOUT_CYCLES) {
+        orch.report_fatal(SIMPLER_ERROR_TENSOR_WAIT_TIMEOUT, /* ... */);
+        return false;
+    }
+}
+if (wait_for_consumers) {  // set_tensor_data() 才执行
+    start = get_sys_cnt_aicpu();
+    while (consumer_refcount < consumer_count) {
+        if (get_sys_cnt_aicpu() - start > TENSOR_DATA_TIMEOUT_CYCLES) {
+            orch.report_fatal(SIMPLER_ERROR_TENSOR_WAIT_TIMEOUT, /* ... */);
+            return false;
+        }
+    }
+}
+~~~
+
+两个循环**各自计时**，onboard 预算均为 **15 s**。代码省略了引用计数掩码和每 1024 次轮询才检查超时的细节；超时报错码 **8**，随后进入本次 run 的失败收尾。[等待与报错](../../../src/a2a3/runtime/tensormap_and_ringbuffer/runtime/runtime_core.cpp) · [预算](../../../src/a2a3/platform/include/common/platform_config.h) · [收尾](../../../src/a2a3/runtime/tensormap_and_ringbuffer/runtime/scheduler/scheduler_cold_path.cpp)
+
 ## 5. 任务环与资源池回收等待超时
 
 ## 6. RunHandle.wait(timeout) 调用方等待超时
