@@ -575,14 +575,13 @@ wrapped `sched_*` symbols are a GNU ld feature. The stub-linkage check runs on
 every leg, because which archive member resolves a symbol, and whether a weak
 definition wins, is decided by the platform's linker instead.
 
-That job also uses `ccache` through `CMAKE_CXX_COMPILER_LAUNCHER`, with the
-directory restored and saved by the `cache-ccache` composite action. The
-launcher is passed only when `ccache` is on `PATH`, so a runner whose package
-manager could not serve it still builds; the step prints `ccache --show-stats`
-after the build, which is the only place a restored-but-unusable cache is
-distinguishable from a cold one. Self-hosted runners keep their home directory
-between runs, so the emergency CPU lane uses the on-disk cache and skips the
-upload.
+The `cache-ccache` action installs and configures `ccache` for GitHub-hosted
+UT and a2a3sim/a5sim scene jobs. It restores a shared baseline; PR jobs do not
+upload their own copy. The UT install, UT C++ build, and each sim install print
+separate hit statistics. A runner without `ccache` still builds. Self-hosted
+UT runners continue to use their local on-disk cache. `ut-ccache-warm.yml`
+builds the simulator and C++ unit-test objects on `main` after its first merge
+and daily thereafter, without running tests, then saves the baseline for new PRs.
 
 ### `examples/` — Small examples (sim + onboard)
 

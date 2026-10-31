@@ -1,29 +1,73 @@
-name: Cache ccache objects
-description: Restore and save the per-runner ccache directory, and point ccache at it.
+name: Set up ccache
+description: Install and configure ccache, restore its objects, and optionally save them.
+
+inputs:
+  save:
+    description: Save the updated cache after a successful job.
+    required: false
+    default: "false"
 
 runs:
   using: composite
   steps:
-    - name: Configure ccache
+    - name: Check ccache
+      id: check
       shell: bash
       run: |
+        if command -v ccache >/dev/null 2>&1; then
+          echo "available=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Install ccache on Linux
+      if: runner.os == 'Linux' && steps.check.outputs.available != 'true'
+      uses: ./.github/actions/apt-install
+      with:
+        optional-packages: ccache
+        install-timeout-seconds: "240"
+
+    - name: Install ccache on macOS
+      if: runner.os == 'macOS' && steps.check.outputs.available != 'true'
+      shell: bash
+      run: |
+        brew install ccache || echo "::warning::ccache unavailable; compiling without cache"
+
+    - name: Configure ccache
+      id: configure
+      shell: bash
+      run: |
+        if ! command -v ccache >/dev/null 2>&1; then
+          echo "::notice::ccache unavailable; compiling without cache"
+          exit 0
+        fi
         # The directory is exported rather than left to ccache's own default
         # because that default moved between versions and differs by platform
         # (~/.ccache against ~/Library/Caches/ccache), while actions/cache needs
-        # one literal path. Compression is what keeps the saved entry an
-        # 84 MB upload instead of a 567 MB one; object files compress ~7x.
+        # one literal path. Compression keeps uploads smaller than raw objects.
         echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
         echo "CCACHE_COMPRESS=1" >> "$GITHUB_ENV"
         echo "CCACHE_MAXSIZE=1G" >> "$GITHUB_ENV"
+        echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> "$GITHUB_ENV"
+        echo "available=true" >> "$GITHUB_OUTPUT"
 
-    - name: Cache ccache objects
-      uses: actions/cache@v5
+    - name: Restore ccache objects
+      if: steps.configure.outputs.available == 'true' && inputs.save != 'true'
+      uses: actions/cache/restore@v5
       with:
         path: ~/.ccache
-        # The run id is in the key so every run writes a fresh entry and the
-        # restore-key prefix hands it the newest previous one: this repository
-        # runs CI on pull_request only, so no default-branch run exists to
-        # populate a shared entry that pull requests could merely read.
         key: ${{ runner.os }}-${{ runner.arch }}-ccache-${{ github.run_id }}
         restore-keys: |
           ${{ runner.os }}-${{ runner.arch }}-ccache-
+
+    - name: Restore and save ccache objects
+      if: steps.configure.outputs.available == 'true' && inputs.save == 'true'
+      uses: actions/cache@v5
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-${{ runner.arch }}-ccache-${{ github.run_id }}
+        restore-keys: |
+          ${{ runner.os }}-${{ runner.arch }}-ccache-
+
+    - name: Reset ccache statistics
+      if: steps.configure.outputs.available == 'true'
+      shell: bash
+      run: ccache --zero-stats
