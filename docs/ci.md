@@ -575,14 +575,15 @@ wrapped `sched_*` symbols are a GNU ld feature. The stub-linkage check runs on
 every leg, because which archive member resolves a symbol, and whether a weak
 definition wins, is decided by the platform's linker instead.
 
-That job also uses `ccache` through `CMAKE_CXX_COMPILER_LAUNCHER`, with the
-directory restored and saved by the `cache-ccache` composite action. The
-launcher is passed only when `ccache` is on `PATH`, so a runner whose package
-manager could not serve it still builds; the step prints `ccache --show-stats`
-after the build, which is the only place a restored-but-unusable cache is
-distinguishable from a cold one. Self-hosted runners keep their home directory
-between runs, so the emergency CPU lane uses the on-disk cache and skips the
-upload.
+That job also uses `ccache` through `CMAKE_CXX_COMPILER_LAUNCHER` during the
+simulator package install and the C++ unit-test build. Each build prints its
+own `ccache` statistics. The launcher is used only when `ccache` is available,
+so a runner without it still builds. PR jobs only restore the GitHub-hosted
+cache; the `main` warmer saves it. Self-hosted runners retain their cache on disk.
+`ut-ccache-warm.yml` builds the same simulator and C++ unit-test objects on
+`main` after its first merge and daily thereafter, without running tests. A
+new PR can restore that baseline; later runs of the same PR can restore its
+own newer cache. GitHub does not share a PR's cache with other PRs.
 
 ### `examples/` — Small examples (sim + onboard)
 
