@@ -721,17 +721,36 @@ platform_case(test_run_terminal_release_policy.cpp PER_ARCH PER_RUNTIME
         ${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp)
 simpler_pmu_arch_a5_define(run_terminal_release_policy)
 
-# The two production sides every chip_swimlane case compiles — the host
+# The two production sides every chip_swimlane case uses — the host
 # collector and the AICPU producer module — with the arch's sim regs and
 # profiling copy under them. @arch@ expands per combination, in the factory.
-# The six cases below all take this list; it is one list because they cover
-# one pair of sides.
+# Each arch/runtime pair takes one object set because the cases cover the same
+# pair of sides.
 set(CHIP_SWIMLANE_CASE_SOURCES
     ${SIMPLER_COMMON_PLATFORM_DIR}/shared/host/chip_swimlane_collector.cpp
     ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/chip_swimlane_collector_aicpu.cpp
     ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/device_run_result_base_aicpu.cpp
     ${SIMPLER_SRC}/@arch@/platform/sim/aicpu/inner_platform_regs.cpp
     ${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp)
+
+# These cases use the same production code and compile contract within each
+# arch/runtime pair. Each executable still owns its own copy of the objects and
+# its own process state.
+foreach(arch a2a3 a5)
+    foreach(runtime IN LISTS SIMPLER_RUNTIMES)
+        string(CONFIGURE "${CHIP_SWIMLANE_CASE_SOURCES}" _sources @ONLY)
+        add_library(chip_swimlane_${arch}_${runtime}_objs OBJECT ${_sources})
+        simpler_ut_common_includes(${arch} aicpu _includes)
+        target_include_directories(chip_swimlane_${arch}_${runtime}_objs PRIVATE
+            ${_includes}
+            ${SIMPLER_SRC}/common/worker
+            ${SIMPLER_SRC}/common/${runtime})
+        target_compile_definitions(chip_swimlane_${arch}_${runtime}_objs PRIVATE
+            SIMPLER_RUNTIME_NAME="${runtime}")
+    endforeach()
+endforeach()
+set(CHIP_SWIMLANE_CASE_OBJECTS
+    "$<TARGET_OBJECTS:chip_swimlane_@arch@_@runtime@_objs>")
 
 # The collector pair carries both real sides: the host collector fills the bank
 # and the AICPU producer module drives init -> complete_task -> flush, so a test
@@ -751,7 +770,7 @@ set(CHIP_SWIMLANE_CASE_SOURCES
 platform_case(test_chip_swimlane_collector.cpp
     PER_ARCH PER_RUNTIME TIER aicpu
     PYUT_EXPORT chip_swimlane_collector
-    SOURCES ${CHIP_SWIMLANE_CASE_SOURCES})
+    SOURCES ${CHIP_SWIMLANE_CASE_OBJECTS})
 
 platform_cases(
     test_chip_swimlane_run_terminal.cpp
@@ -762,7 +781,7 @@ platform_cases(
     test_chip_swimlane_joined_diagnostics.cpp
     test_chip_swimlane_retained_runs.cpp
     PER_ARCH PER_RUNTIME TIER aicpu
-    SOURCES ${CHIP_SWIMLANE_CASE_SOURCES})
+    SOURCES ${CHIP_SWIMLANE_CASE_OBJECTS})
 
 # Both axes, and neither is about what the case covers: the decision under test
 # is header-only and arch-independent, but it names `ChipSwimlaneLevel` and
@@ -777,18 +796,13 @@ platform_case(test_joined_diagnostic_eligibility.cpp PER_ARCH PER_RUNTIME)
 # so an a5 build compares a5's output against a2a3's file and fails on those
 # two values.
 #
-# The writer itself is correct on a5 — the other five cases above cover it
+# The writer itself is correct on a5 — the other cases above cover it
 # there, and an a5 build of this one differs from its golden in exactly those
 # two fields and nothing else. Capturing an a5 golden is what this needs; until
 # then a5 is uncovered here.
 platform_case(test_chip_swimlane_run_export.cpp
     PER_RUNTIME TIER aicpu
-    SOURCES
-        ${SIMPLER_COMMON_PLATFORM_DIR}/shared/host/chip_swimlane_collector.cpp
-        ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/chip_swimlane_collector_aicpu.cpp
-        ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/device_run_result_base_aicpu.cpp
-        ${SIMPLER_SRC}/@arch@/platform/sim/aicpu/inner_platform_regs.cpp
-        ${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp)
+    SOURCES ${CHIP_SWIMLANE_CASE_OBJECTS})
 
 # The same two sides, reading the transport rather than the record: support/
 # profiling_copy_fault.cpp defines the profiling_copy_* entry points the arch's
