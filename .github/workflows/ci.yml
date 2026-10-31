@@ -5,7 +5,7 @@ permissions:
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, codex/ut-ccache-base-probe]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
