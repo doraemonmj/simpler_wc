@@ -1,0 +1,66 @@
+name: Warm UT C++ cache
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ut-ccache-warm.yml
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ut-ccache-warm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - uses: ./.github/actions/setup-gcc-15
+      - name: Install build tools on Linux
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/apt-install
+        with:
+          required-packages: libgtest-dev g++-aarch64-linux-gnu ccache
+          install-timeout-seconds: "240"
+      - name: Install build tools on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install googletest
+          command -v ccache >/dev/null 2>&1 || brew install ccache
+      - uses: ./.github/actions/cache-pip
+      - uses: ./.github/actions/cache-ccache
+        with:
+          save: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build simulator package
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install 'scikit-build-core>=0.10.0' 'nanobind>=2.0.0,<3' 'cmake>=3.20'
+          ccache --zero-stats
+          pip install --no-build-isolation \
+            --config-settings=build.targets=build_package_sim -e '.[test]'
+          echo "Simulator install ccache statistics:"
+          ccache --show-stats
+          ccache --zero-stats
+      - name: Build C++ unit-test objects
+        run: |
+          cmake -B tests/ut/cpp/build -S tests/ut/cpp -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build tests/ut/cpp/build --parallel 4
+          echo "C++ unit-test build ccache statistics:"
+          ccache --show-stats
