@@ -55,9 +55,7 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           required-packages: libgtest-dev g++-aarch64-linux-gnu
-          # ccache only makes the C++ build faster, and the build step below
-          # reads whether it arrived rather than assuming it, so a package
-          # manager that cannot serve it costs minutes and fails nothing.
+          # Both install and C++ UT builds check whether optional ccache arrived.
           optional-packages: ccache
           install-timeout-seconds: "240"
 
@@ -82,9 +80,20 @@ jobs:
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install 'scikit-build-core>=0.10.0' 'nanobind>=2.0.0,<3' 'cmake>=3.20'
+          use_ccache=false
+          if command -v ccache >/dev/null 2>&1 && ccache --zero-stats >/dev/null 2>&1; then
+            export CMAKE_CXX_COMPILER_LAUNCHER=ccache
+            use_ccache=true
+          else
+            echo "::notice::ccache unavailable for simulator install; compiling without cache"
+          fi
           # Worker integration tests exercise both a2a3sim and a5sim.
           pip install --no-build-isolation \
             --config-settings=build.targets=build_package_sim -e '.[test]'
+          if [ "$use_ccache" = true ]; then
+            echo "Simulator install ccache statistics:"
+            ccache --show-stats
+          fi
 
       - name: venv + deps
         if: inputs.setup_variant == 'self-cpu'
@@ -140,14 +149,13 @@ jobs:
           launcher=()
           if command -v ccache >/dev/null 2>&1; then
             launcher=(-DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+            # Keep the unit-test hit rate separate from the install above.
             ccache --zero-stats >/dev/null 2>&1 || true
           fi
           cmake -B tests/ut/cpp/build -S tests/ut/cpp -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "${launcher[@]}"
           cmake --build tests/ut/cpp/build --parallel 4
-          # The hit rate is what says whether the restored cache was usable, and
-          # it is only readable here — a cold cache and a key that stopped
-          # matching produce the same full-length build otherwise.
           if command -v ccache >/dev/null 2>&1; then
+            echo "C++ unit-test build ccache statistics:"
             ccache --show-stats
           fi
           ctest --test-dir tests/ut/cpp/build -LE requires_hardware -j4 --output-on-failure --timeout 300
