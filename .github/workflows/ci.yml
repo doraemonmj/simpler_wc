@@ -1,4 +1,4 @@
-name: CI cold C++ UT benchmark
+name: CI cold C++ UT comparison
 
 permissions:
   contents: read
@@ -12,14 +12,80 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ut:
+  compare:
+    name: cold-build (${{ matrix.os }}, ${{ matrix.order }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_ut-no-hardware.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      python_version: ${{ matrix.python-version }}
+        order: [baseline-first, variant-first]
+    steps:
+      - name: Checkout PR head and base history
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Set up C++ compiler
+        uses: ./.github/actions/setup-gcc-15
+
+      - name: Install GoogleTest on Linux
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/apt-install
+        with:
+          required-packages: libgtest-dev
+          install-timeout-seconds: "240"
+
+      - name: Install GoogleTest on macOS
+        if: runner.os == 'macOS'
+        run: brew install googletest
+
+      - name: Install sim package needed by the CMake include contract
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install 'scikit-build-core>=0.10.0' 'nanobind>=2.0.0,<3' 'cmake>=3.20'
+          pip install --no-build-isolation \
+            --config-settings=build.targets=build_package_sim -e '.[test]'
+
+      - name: Compare fresh C++ UT builds on one runner
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ORDER: ${{ matrix.order }}
+        run: |
+          set -euo pipefail
+          echo "Runner: $RUNNER_OS $(uname -m)"
+          if [ "$RUNNER_OS" = Linux ]; then
+            lscpu | grep -E 'Model name:|CPU\(s\):'
+          else
+            sysctl -n machdep.cpu.brand_string || true
+          fi
+          source_file=tests/ut/cpp/common/platform/CMakeLists.txt
+          cp "$source_file" "$RUNNER_TEMP/variant-platform-CMakeLists.txt"
+          git show "$BASE_SHA:$source_file" > "$RUNNER_TEMP/baseline-platform-CMakeLists.txt"
+          trap 'cp "$RUNNER_TEMP/variant-platform-CMakeLists.txt" "$source_file"' EXIT
+
+          if [ "$ORDER" = baseline-first ]; then
+            variants=(baseline variant)
+          else
+            variants=(variant baseline)
+          fi
+          for variant in "${variants[@]}"; do
+            cp "$RUNNER_TEMP/$variant-platform-CMakeLists.txt" "$source_file"
+            build_dir="$RUNNER_TEMP/ut-$variant"
+            cmake -G 'Unix Makefiles' -S tests/ut/cpp -B "$build_dir" \
+              -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            commands=$(python -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' \
+              "$build_dir/compile_commands.json")
+            echo "BENCH $variant compile_commands=$commands"
+            echo "BENCH $variant build-start"
+            /usr/bin/time -p cmake --build "$build_dir" --parallel 4
+            echo "BENCH $variant build-done"
+          done
