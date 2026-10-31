@@ -27,9 +27,19 @@ jobs:
       runs_on: '["ubuntu-latest"]'
       setup_variant: github
 
-  ut:
-    name: UT cache probe
-    uses: ./.github/workflows/ut-ccache-warm.yml
+  st-sim-a2a3:
+    name: a2a3sim cache probe
+    uses: ./.github/workflows/_st-sim-a2a3.yml
+    with:
+      runs_on: '["ubuntu-latest"]'
+      setup_variant: github
+
+  st-sim-a5:
+    name: a5sim cache probe
+    uses: ./.github/workflows/_st-sim-a5.yml
+    with:
+      runs_on: '["macos-latest"]'
+      setup_variant: github
 
   st-framework-eager-a2a3:
     needs: [detect-changes, pre-commit]
