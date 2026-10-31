@@ -553,7 +553,7 @@ platform_case(test_diagnostic_run_credit.cpp PER_ARCH PER_RUNTIME)
 # implementation sits at a different path in each runtime tree, so there is no
 # one template, and the sim base resolves its bare `runtime.h` to whichever
 # runtime it was built for.
-set(CAPACITY_REFUSAL_SOURCES
+set(CAPACITY_REFUSAL_RAW_SOURCES
     ${SIMPLER_COMMON_PLATFORM_DIR}/sim/host/c_api_shared.cpp
     ${SIMPLER_COMMON_PLATFORM_DIR}/sim/host/device_runner_base.cpp
     ${SIMPLER_COMMON_PLATFORM_DIR}/sim/host/memory_allocator.cpp
@@ -576,6 +576,44 @@ set(CAPACITY_REFUSAL_INCLUDES
     ${SIMPLER_COMMON_PLATFORM_DIR}/sim/sim_context
     ${SIMPLER_LOG_DIR}
     ${SIMPLER_SRC}/common/worker)
+
+# These admission and ordinary-close cases compile the same runner/collector
+# closure with the same definitions for each arch/runtime pair. Keep the sim
+# profiling copy separate: the scope-stats ordinary-close case supplies its own
+# detached read boundary and intentionally omits that production definition.
+set(_CAPACITY_REFUSAL_CORE_SOURCES ${CAPACITY_REFUSAL_RAW_SOURCES})
+list(FILTER _CAPACITY_REFUSAL_CORE_SOURCES EXCLUDE REGEX "/sim/host/profiling_copy\\.cpp$")
+foreach(arch a2a3 a5)
+    foreach(runtime IN LISTS SIMPLER_RUNTIMES)
+        simpler_runtime_tag("${runtime}" _runtime_tag)
+        string(CONFIGURE "${_CAPACITY_REFUSAL_CORE_SOURCES}" _core_sources @ONLY)
+        string(CONFIGURE "${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp"
+            _profiling_source @ONLY)
+        get_target_property(_runtime_includes ${arch}_${_runtime_tag}_objs
+            INTERFACE_INCLUDE_DIRECTORIES)
+        foreach(part core profiling)
+            if(part STREQUAL "core")
+                set(_sources ${_core_sources})
+            else()
+                set(_sources ${_profiling_source})
+            endif()
+            set(_target capacity_refusal_${arch}_${_runtime_tag}_${part}_objs)
+            add_library(${_target} OBJECT ${_sources})
+            target_include_directories(${_target} PRIVATE
+                ${GTEST_INCLUDE_DIRS}
+                ${CAPACITY_REFUSAL_INCLUDES}
+                ${_runtime_includes})
+            target_compile_definitions(${_target} PRIVATE
+                SIMPLER_PLATFORM_NAME="${arch}sim"
+                SIMPLER_RUNTIME_NAME="${runtime}")
+        endforeach()
+    endforeach()
+endforeach()
+set(CAPACITY_REFUSAL_CORE_OBJECTS
+    "$<TARGET_OBJECTS:capacity_refusal_@arch@_@runtime@_core_objs>")
+set(CAPACITY_REFUSAL_SOURCES
+    ${CAPACITY_REFUSAL_CORE_OBJECTS}
+    "$<TARGET_OBJECTS:capacity_refusal_@arch@_@runtime@_profiling_objs>")
 
 hbg_case(test_diagnostic_capacity_refusal_phase.cpp
     SOURCES
@@ -674,8 +712,7 @@ tmr_case(test_args_dump_ordinary_close.cpp
     LINK     ${CMAKE_DL_LIBS})
 
 # Both architectures use detached shadows to observe forbidden terminal reads.
-set(SCOPE_STATS_ORDINARY_CLOSE_SOURCES ${CAPACITY_REFUSAL_SOURCES})
-list(FILTER SCOPE_STATS_ORDINARY_CLOSE_SOURCES EXCLUDE REGEX "/sim/host/profiling_copy\\.cpp$")
+set(SCOPE_STATS_ORDINARY_CLOSE_SOURCES ${CAPACITY_REFUSAL_CORE_OBJECTS})
 
 hbg_case(test_scope_stats_ordinary_close.cpp
     SOURCES
