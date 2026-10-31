@@ -20,10 +20,8 @@ runs:
       uses: actions/cache@v5
       with:
         path: ~/.ccache
-        # The run id is in the key so every run writes a fresh entry and the
-        # restore-key prefix hands it the newest previous one: this repository
-        # runs CI on pull_request only, so no default-branch run exists to
-        # populate a shared entry that pull requests could merely read.
+        # PR runs restore from their own merge ref first, then from main.
+        # The run id lets each run save an updated cache.
         key: ${{ runner.os }}-${{ runner.arch }}-ccache-${{ github.run_id }}
         restore-keys: |
           ${{ runner.os }}-${{ runner.arch }}-ccache-
