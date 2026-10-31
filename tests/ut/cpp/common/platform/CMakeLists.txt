@@ -553,7 +553,7 @@ platform_case(test_diagnostic_run_credit.cpp PER_ARCH PER_RUNTIME)
 # implementation sits at a different path in each runtime tree, so there is no
 # one template, and the sim base resolves its bare `runtime.h` to whichever
 # runtime it was built for.
-set(CAPACITY_REFUSAL_SOURCES
+set(CAPACITY_REFUSAL_RAW_SOURCES
     ${SIMPLER_COMMON_PLATFORM_DIR}/sim/host/c_api_shared.cpp
     ${SIMPLER_COMMON_PLATFORM_DIR}/sim/host/device_runner_base.cpp
     ${SIMPLER_COMMON_PLATFORM_DIR}/sim/host/memory_allocator.cpp
@@ -576,6 +576,44 @@ set(CAPACITY_REFUSAL_INCLUDES
     ${SIMPLER_COMMON_PLATFORM_DIR}/sim/sim_context
     ${SIMPLER_LOG_DIR}
     ${SIMPLER_SRC}/common/worker)
+
+# These admission and ordinary-close cases compile the same runner/collector
+# closure with the same definitions for each arch/runtime pair. Keep the sim
+# profiling copy separate: the scope-stats ordinary-close case supplies its own
+# detached read boundary and intentionally omits that production definition.
+set(_CAPACITY_REFUSAL_CORE_SOURCES ${CAPACITY_REFUSAL_RAW_SOURCES})
+list(FILTER _CAPACITY_REFUSAL_CORE_SOURCES EXCLUDE REGEX "/sim/host/profiling_copy\\.cpp$")
+foreach(arch a2a3 a5)
+    foreach(runtime IN LISTS SIMPLER_RUNTIMES)
+        simpler_runtime_tag("${runtime}" _runtime_tag)
+        string(CONFIGURE "${_CAPACITY_REFUSAL_CORE_SOURCES}" _core_sources @ONLY)
+        string(CONFIGURE "${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp"
+            _profiling_source @ONLY)
+        get_target_property(_runtime_includes ${arch}_${_runtime_tag}_objs
+            INTERFACE_INCLUDE_DIRECTORIES)
+        foreach(part core profiling)
+            if(part STREQUAL "core")
+                set(_sources ${_core_sources})
+            else()
+                set(_sources ${_profiling_source})
+            endif()
+            set(_target capacity_refusal_${arch}_${_runtime_tag}_${part}_objs)
+            add_library(${_target} OBJECT ${_sources})
+            target_include_directories(${_target} PRIVATE
+                ${GTEST_INCLUDE_DIRS}
+                ${CAPACITY_REFUSAL_INCLUDES}
+                ${_runtime_includes})
+            target_compile_definitions(${_target} PRIVATE
+                SIMPLER_PLATFORM_NAME="${arch}sim"
+                SIMPLER_RUNTIME_NAME="${runtime}")
+        endforeach()
+    endforeach()
+endforeach()
+set(CAPACITY_REFUSAL_CORE_OBJECTS
+    "$<TARGET_OBJECTS:capacity_refusal_@arch@_@runtime@_core_objs>")
+set(CAPACITY_REFUSAL_SOURCES
+    ${CAPACITY_REFUSAL_CORE_OBJECTS}
+    "$<TARGET_OBJECTS:capacity_refusal_@arch@_@runtime@_profiling_objs>")
 
 hbg_case(test_diagnostic_capacity_refusal_phase.cpp
     SOURCES
@@ -674,8 +712,7 @@ tmr_case(test_args_dump_ordinary_close.cpp
     LINK     ${CMAKE_DL_LIBS})
 
 # Both architectures use detached shadows to observe forbidden terminal reads.
-set(SCOPE_STATS_ORDINARY_CLOSE_SOURCES ${CAPACITY_REFUSAL_SOURCES})
-list(FILTER SCOPE_STATS_ORDINARY_CLOSE_SOURCES EXCLUDE REGEX "/sim/host/profiling_copy\\.cpp$")
+set(SCOPE_STATS_ORDINARY_CLOSE_SOURCES ${CAPACITY_REFUSAL_CORE_OBJECTS})
 
 hbg_case(test_scope_stats_ordinary_close.cpp
     SOURCES
@@ -721,17 +758,36 @@ platform_case(test_run_terminal_release_policy.cpp PER_ARCH PER_RUNTIME
         ${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp)
 simpler_pmu_arch_a5_define(run_terminal_release_policy)
 
-# The two production sides every chip_swimlane case compiles — the host
+# The two production sides every chip_swimlane case uses — the host
 # collector and the AICPU producer module — with the arch's sim regs and
 # profiling copy under them. @arch@ expands per combination, in the factory.
-# The six cases below all take this list; it is one list because they cover
-# one pair of sides.
+# Each arch/runtime pair takes one object set because the cases cover the same
+# pair of sides.
 set(CHIP_SWIMLANE_CASE_SOURCES
     ${SIMPLER_COMMON_PLATFORM_DIR}/shared/host/chip_swimlane_collector.cpp
     ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/chip_swimlane_collector_aicpu.cpp
     ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/device_run_result_base_aicpu.cpp
     ${SIMPLER_SRC}/@arch@/platform/sim/aicpu/inner_platform_regs.cpp
     ${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp)
+
+# These cases use the same production code and compile contract within each
+# arch/runtime pair. Each executable still owns its own copy of the objects and
+# its own process state.
+foreach(arch a2a3 a5)
+    foreach(runtime IN LISTS SIMPLER_RUNTIMES)
+        string(CONFIGURE "${CHIP_SWIMLANE_CASE_SOURCES}" _sources @ONLY)
+        add_library(chip_swimlane_${arch}_${runtime}_objs OBJECT ${_sources})
+        simpler_ut_common_includes(${arch} aicpu _includes)
+        target_include_directories(chip_swimlane_${arch}_${runtime}_objs PRIVATE
+            ${_includes}
+            ${SIMPLER_SRC}/common/worker
+            ${SIMPLER_SRC}/common/${runtime})
+        target_compile_definitions(chip_swimlane_${arch}_${runtime}_objs PRIVATE
+            SIMPLER_RUNTIME_NAME="${runtime}")
+    endforeach()
+endforeach()
+set(CHIP_SWIMLANE_CASE_OBJECTS
+    "$<TARGET_OBJECTS:chip_swimlane_@arch@_@runtime@_objs>")
 
 # The collector pair carries both real sides: the host collector fills the bank
 # and the AICPU producer module drives init -> complete_task -> flush, so a test
@@ -751,7 +807,7 @@ set(CHIP_SWIMLANE_CASE_SOURCES
 platform_case(test_chip_swimlane_collector.cpp
     PER_ARCH PER_RUNTIME TIER aicpu
     PYUT_EXPORT chip_swimlane_collector
-    SOURCES ${CHIP_SWIMLANE_CASE_SOURCES})
+    SOURCES ${CHIP_SWIMLANE_CASE_OBJECTS})
 
 platform_cases(
     test_chip_swimlane_run_terminal.cpp
@@ -762,7 +818,7 @@ platform_cases(
     test_chip_swimlane_joined_diagnostics.cpp
     test_chip_swimlane_retained_runs.cpp
     PER_ARCH PER_RUNTIME TIER aicpu
-    SOURCES ${CHIP_SWIMLANE_CASE_SOURCES})
+    SOURCES ${CHIP_SWIMLANE_CASE_OBJECTS})
 
 # Both axes, and neither is about what the case covers: the decision under test
 # is header-only and arch-independent, but it names `ChipSwimlaneLevel` and
@@ -777,18 +833,13 @@ platform_case(test_joined_diagnostic_eligibility.cpp PER_ARCH PER_RUNTIME)
 # so an a5 build compares a5's output against a2a3's file and fails on those
 # two values.
 #
-# The writer itself is correct on a5 — the other five cases above cover it
+# The writer itself is correct on a5 — the other cases above cover it
 # there, and an a5 build of this one differs from its golden in exactly those
 # two fields and nothing else. Capturing an a5 golden is what this needs; until
 # then a5 is uncovered here.
 platform_case(test_chip_swimlane_run_export.cpp
     PER_RUNTIME TIER aicpu
-    SOURCES
-        ${SIMPLER_COMMON_PLATFORM_DIR}/shared/host/chip_swimlane_collector.cpp
-        ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/chip_swimlane_collector_aicpu.cpp
-        ${SIMPLER_COMMON_PLATFORM_DIR}/shared/aicpu/device_run_result_base_aicpu.cpp
-        ${SIMPLER_SRC}/@arch@/platform/sim/aicpu/inner_platform_regs.cpp
-        ${SIMPLER_SRC}/@arch@/platform/sim/host/profiling_copy.cpp)
+    SOURCES ${CHIP_SWIMLANE_CASE_OBJECTS})
 
 # The same two sides, reading the transport rather than the record: support/
 # profiling_copy_fault.cpp defines the profiling_copy_* entry points the arch's
