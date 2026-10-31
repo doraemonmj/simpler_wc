@@ -1,4 +1,4 @@
-name: CI cold C++ UT comparison
+name: CI cold C++ UT generator comparison
 
 permissions:
   contents: read
@@ -13,20 +13,19 @@ concurrency:
 
 jobs:
   compare:
-    name: cold-build (${{ matrix.os }}, ${{ matrix.order }})
+    name: generator (${{ matrix.os }}, ${{ matrix.order }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 50
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        order: [baseline-first, variant-first]
+        order: [forward, reverse]
     steps:
-      - name: Checkout PR head and base history
+      - name: Checkout PR head
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python 3.10
@@ -34,7 +33,7 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Set up C++ compiler
+      - name: Set up C++ compiler and Ninja
         uses: ./.github/actions/setup-gcc-15
 
       - name: Install GoogleTest on Linux
@@ -55,37 +54,44 @@ jobs:
           pip install --no-build-isolation \
             --config-settings=build.targets=build_package_sim -e '.[test]'
 
-      - name: Compare fresh C++ UT builds on one runner
+      - name: Compare fresh full C++ UT builds
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           ORDER: ${{ matrix.order }}
         run: |
           set -euo pipefail
           echo "Runner: $RUNNER_OS $(uname -m)"
           if [ "$RUNNER_OS" = Linux ]; then
+            echo "available_cpus=$(nproc)"
             lscpu | grep -E 'Model name:|CPU\(s\):'
+            variants=(make4 ninja4)
           else
+            echo "available_cpus=$(sysctl -n hw.logicalcpu)"
             sysctl -n machdep.cpu.brand_string || true
+            variants=(make4 ninja4 ninja3)
           fi
-          source_file=tests/ut/cpp/common/platform/CMakeLists.txt
-          cp "$source_file" "$RUNNER_TEMP/variant-platform-CMakeLists.txt"
-          git show "$BASE_SHA:$source_file" > "$RUNNER_TEMP/baseline-platform-CMakeLists.txt"
-          trap 'cp "$RUNNER_TEMP/variant-platform-CMakeLists.txt" "$source_file"' EXIT
-
-          if [ "$ORDER" = baseline-first ]; then
-            variants=(baseline variant)
-          else
-            variants=(variant baseline)
+          if [ "$ORDER" = reverse ]; then
+            reversed=()
+            for ((i=${#variants[@]}-1; i>=0; i--)); do
+              reversed+=("${variants[i]}")
+            done
+            variants=("${reversed[@]}")
           fi
           for variant in "${variants[@]}"; do
-            cp "$RUNNER_TEMP/$variant-platform-CMakeLists.txt" "$source_file"
+            generator='Unix Makefiles'
+            parallel=4
+            if [[ "$variant" == ninja* ]]; then
+              generator=Ninja
+            fi
+            if [ "$variant" = ninja3 ]; then
+              parallel=3
+            fi
             build_dir="$RUNNER_TEMP/ut-$variant"
-            cmake -G 'Unix Makefiles' -S tests/ut/cpp -B "$build_dir" \
+            cmake -G "$generator" -S tests/ut/cpp -B "$build_dir" \
               -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
             commands=$(python -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' \
               "$build_dir/compile_commands.json")
-            echo "BENCH $variant compile_commands=$commands"
+            echo "BENCH $variant compile_commands=$commands parallel=$parallel"
             echo "BENCH $variant build-start"
-            /usr/bin/time -p cmake --build "$build_dir" --parallel 4
+            /usr/bin/time -p cmake --build "$build_dir" --parallel "$parallel"
             echo "BENCH $variant build-done"
           done
