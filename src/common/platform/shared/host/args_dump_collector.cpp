@@ -872,6 +872,7 @@ void ArgsDumpCollector::request_writer_stop() {
 void ArgsDumpCollector::writer_loop() {
     while (true) {
         PayloadWriteRequest request;
+        bool queue_drained = false;
         {
             std::unique_lock<std::mutex> lock(write_mutex_);
             write_cv_.wait(lock, [this] {
@@ -882,7 +883,9 @@ void ArgsDumpCollector::writer_loop() {
             }
             request = std::move(write_queue_.front());
             write_queue_.pop();
+            queue_drained = write_queue_.empty();
         }
+        if (queue_drained) write_cv_.notify_all();
 
         if (!request.bytes.empty()) {
             if (!bin_file_.is_open()) {
@@ -999,7 +1002,10 @@ int ArgsDumpCollector::export_dump_files() {
                 "Writing to disk: %.1f GB written, %zu args remaining (%lds)", bytes_written_.load() / 1e9, remaining,
                 elapsed_s
             );
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            std::unique_lock<std::mutex> lock(write_mutex_);
+            write_cv_.wait_for(lock, std::chrono::seconds(1), [this] {
+                return write_queue_.empty();
+            });
         }
 
         if (bin_file_.is_open()) {

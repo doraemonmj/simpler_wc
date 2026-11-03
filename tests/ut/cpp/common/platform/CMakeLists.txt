@@ -761,8 +761,14 @@ platform_cases(
     test_chip_swimlane_handoff_accounting.cpp
     test_chip_swimlane_handoff_identity.cpp
     test_chip_swimlane_joined_diagnostics.cpp
-    test_chip_swimlane_retained_runs.cpp
     PER_ARCH PER_RUNTIME TIER aicpu
+    SOURCES ${CHIP_SWIMLANE_CASE_SOURCES})
+
+# Readerless retained-run cases exercise the control acknowledgement deadline;
+# their verdict is independent of the production budget's two-second length.
+platform_case(test_chip_swimlane_retained_runs.cpp
+    PER_ARCH PER_RUNTIME TIER aicpu
+    DEFINES SIMPLER_DFX_UT_CONTROL_ACK_BUDGET_MS=500
     SOURCES ${CHIP_SWIMLANE_CASE_SOURCES})
 
 # Both axes, and neither is about what the case covers: the decision under test
