@@ -11,17 +11,11 @@
 
 #pragma once
 
-#include <cstdlib>
 #include <cstring>
-
-inline void *profiler_test_malloc(size_t size) {
-    void *ptr = nullptr;
-    if (posix_memalign(&ptr, 64, size == 0 ? 1 : size) != 0) return nullptr;
-    return ptr;
-}
+#include "host/aligned_allocation.h"
 
 inline void *profiler_test_calloc(size_t size) {
-    void *ptr = profiler_test_malloc(size);
+    void *ptr = simpler::platform::aligned_host_alloc(size);
     if (ptr == nullptr) return nullptr;
     std::memset(ptr, 0, size);
     return ptr;

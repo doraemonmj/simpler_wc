@@ -41,9 +41,9 @@
 #include <utility>
 
 #include "common/chip_swimlane_profiling.h"
+#include "host/aligned_allocation.h"
 #include "host/chip_swimlane_collector.h"
 #include "host/profiler_base.h"
-#include "profiler_test_allocator.h"
 
 namespace fs = std::filesystem;
 
@@ -535,7 +535,7 @@ TEST(SwimlaneCutProgressTest, AnUndecidableQueueIsReportedWithoutHoldingTheOther
 // R2: a late charge never lands on the run that reused the bucket
 // ---------------------------------------------------------------------------
 
-void *loss_alloc(size_t bytes) { return profiler_test_malloc(bytes); }
+void *loss_alloc(size_t bytes) { return simpler::platform::aligned_host_alloc(bytes); }
 int loss_free(void *p) {
     std::free(p);
     return 0;

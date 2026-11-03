@@ -24,20 +24,6 @@ jobs:
       head_sha: ${{ github.event.pull_request.head.sha }}
       runs_on: '["ubuntu-latest"]'
 
-  packaging-matrix:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.examples_only != 'true' && needs.detect-changes.outputs.tests_only != 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10"]
-    uses: ./.github/workflows/_packaging.yml
-    with:
-      runs_on: ${{ toJSON(matrix.os) }}
-      setup_variant: github
-      python_version: ${{ matrix.python-version }}
-
   ut:
     needs: [detect-changes]
     if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
