@@ -22,14 +22,14 @@ jobs:
       base_ref: ${{ github.event.pull_request.base.ref }}
       base_sha: ${{ github.event.pull_request.base.sha }}
       head_sha: ${{ github.event.pull_request.head.sha }}
-      runs_on: '["ubuntu-latest"]'
+      runs_on: '["ubuntu-26.04"]'
 
   ut:
     needs: [detect-changes]
     if: needs.detect-changes.outputs.non_code_only != 'true' && needs.detect-changes.outputs.ut_affected == 'true'
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-26.04, macos-latest]
         python-version: ["3.10"]
     uses: ./.github/workflows/_ut-no-hardware.yml
     with:
@@ -42,7 +42,7 @@ jobs:
     if: needs.detect-changes.outputs.a2a3_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-26.04, macos-latest]
         python-version: ["3.10"]
     uses: ./.github/workflows/_st-sim-a2a3.yml
     with:
@@ -57,7 +57,7 @@ jobs:
     if: needs.detect-changes.outputs.a5_changed == 'true' && needs.detect-changes.outputs.st_affected == 'true'
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-26.04, macos-latest]
         python-version: ["3.10"]
     uses: ./.github/workflows/_st-sim-a5.yml
     with:
