@@ -66,11 +66,3 @@ jobs:
       include_dfx_smokes: true
       session_timeout_seconds: 1200
       python_version: ${{ matrix.python-version }}
-
-  profiling-flags-smoke:
-    needs: [detect-changes]
-    if: (needs.detect-changes.outputs.a2a3_changed == 'true' || needs.detect-changes.outputs.a5_changed == 'true') && needs.detect-changes.outputs.examples_only != 'true' && needs.detect-changes.outputs.tests_only != 'true'
-    uses: ./.github/workflows/_profiling-flags-smoke.yml
-    with:
-      runs_on: '["ubuntu-latest"]'
-      setup_variant: github
