@@ -44,7 +44,11 @@ inline constexpr size_t kPathAllowanceBytes = 4096;
 inline constexpr int kDrainQuantum = 32;                // entries per queue per sweep, then rotate
 inline constexpr uint64_t kCounterMargin = 1ull << 20;  // monotonic counters fail this far from the end
 inline constexpr int kCutAckBudgetMs = 2000;
+#ifdef SIMPLER_DFX_UT_CONTROL_ACK_BUDGET_MS
+inline constexpr int kControlAckBudgetMs = SIMPLER_DFX_UT_CONTROL_ACK_BUDGET_MS;
+#else
 inline constexpr int kControlAckBudgetMs = 2000;
+#endif
 inline constexpr size_t kErrorMsgBytes = 256;
 
 /**
