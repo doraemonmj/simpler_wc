@@ -1,0 +1,166 @@
+name: Ccache performance probe
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [codex/ccache-perf-probe-20261102a]
+
+jobs:
+  prepare:
+    name: prepare (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - uses: ./.github/actions/setup-gcc-15
+        with:
+          install-graphviz: "true"
+      - name: Install build tools on Linux
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/apt-install
+        with:
+          required-packages: libgtest-dev g++-aarch64-linux-gnu ccache
+          install-timeout-seconds: "240"
+      - name: Install build tools on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install googletest
+          command -v ccache >/dev/null 2>&1 || brew install ccache
+      - name: Restore pip packages
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-${{ runner.arch }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-pip-
+      - name: Save warmed compiler objects
+        uses: ./.github/actions/cache-ccache
+        with:
+          save: "true"
+      - name: Build both simulator packages
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install 'scikit-build-core>=0.10.0' 'nanobind>=2.0.0,<3' 'cmake>=3.20'
+          pip install --no-build-isolation \
+            --config-settings=build.targets=build_package_sim -e '.[test]'
+          ccache --show-stats
+          ccache --zero-stats
+      - name: Build C++ UT objects
+        run: |
+          cmake -B tests/ut/cpp/build -S tests/ut/cpp -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          cmake --build tests/ut/cpp/build --parallel 4
+          ccache --show-stats
+
+  bench:
+    name: ${{ matrix.mode }} ${{ matrix.workload }} (${{ matrix.os }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+        mode: [old, warm, forced_miss]
+        workload: [ut, sim]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - uses: ./.github/actions/setup-gcc-15
+        with:
+          install-graphviz: "true"
+      - name: Install GoogleTest and ccache for old UT on Linux
+        if: matrix.workload == 'ut' && matrix.mode == 'old' && runner.os == 'Linux'
+        uses: ./.github/actions/apt-install
+        with:
+          required-packages: libgtest-dev g++-aarch64-linux-gnu
+          optional-packages: ccache
+          install-timeout-seconds: "240"
+      - name: Install GoogleTest and ccache for old UT on macOS
+        if: matrix.workload == 'ut' && matrix.mode == 'old' && runner.os == 'macOS'
+        run: |
+          brew install googletest
+          command -v ccache >/dev/null 2>&1 || brew install ccache
+      - name: Install GoogleTest for new UT on Linux
+        if: matrix.workload == 'ut' && matrix.mode != 'old' && runner.os == 'Linux'
+        uses: ./.github/actions/apt-install
+        with:
+          required-packages: libgtest-dev g++-aarch64-linux-gnu
+          install-timeout-seconds: "240"
+      - name: Install GoogleTest for new UT on macOS
+        if: matrix.workload == 'ut' && matrix.mode != 'old' && runner.os == 'macOS'
+        run: brew install googletest
+      - name: Restore pip packages
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-${{ runner.arch }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-pip-
+      - name: Configure old UT ccache
+        if: matrix.mode == 'old' && matrix.workload == 'ut'
+        run: |
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPRESS=1" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=1G" >> "$GITHUB_ENV"
+      - name: Restore warmed ccache
+        if: matrix.mode != 'old'
+        uses: ./.github/actions/cache-ccache
+      - name: Force misses against the restored baseline
+        if: matrix.mode == 'forced_miss'
+        run: |
+          echo "probe-only-namespace" > "$RUNNER_TEMP/ccache-probe-input"
+          echo "CCACHE_EXTRAFILES=$RUNNER_TEMP/ccache-probe-input" >> "$GITHUB_ENV"
+      - name: Install UT simulator package
+        if: matrix.workload == 'ut'
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install 'scikit-build-core>=0.10.0' 'nanobind>=2.0.0,<3' 'cmake>=3.20'
+          pip install --no-build-isolation \
+            --config-settings=build.targets=build_package_sim -e '.[test]'
+          if [ "${{ matrix.mode }}" != old ]; then
+            ccache --show-stats
+            ccache --zero-stats
+          fi
+      - name: Build C++ UT objects
+        if: matrix.workload == 'ut'
+        run: |
+          launcher=()
+          if command -v ccache >/dev/null 2>&1; then
+            launcher=(-DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+          fi
+          cmake -B tests/ut/cpp/build -S tests/ut/cpp -DCMAKE_EXPORT_COMPILE_COMMANDS=ON "${launcher[@]}"
+          cmake --build tests/ut/cpp/build --parallel 4
+          if command -v ccache >/dev/null 2>&1; then
+            ccache --show-stats
+          fi
+      - name: Install a2a3sim package
+        if: matrix.workload == 'sim' && runner.os == 'Linux'
+        uses: ./.github/actions/setup-venv
+        with:
+          build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
+          packages: "--no-build-isolation --config-settings=build.targets=build_package_a2a3sim .[test]"
+      - name: Install a5sim package
+        if: matrix.workload == 'sim' && runner.os == 'macOS'
+        uses: ./.github/actions/setup-venv
+        with:
+          build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
+          packages: "--no-build-isolation --config-settings=build.targets=build_package_a5sim .[test]"
+      - name: Report sim ccache statistics
+        if: matrix.workload == 'sim' && matrix.mode != 'old'
+        run: ccache --show-stats
