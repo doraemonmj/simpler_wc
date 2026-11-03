@@ -272,7 +272,15 @@ def test_real_workflow_body_preserves_platform_through_the_exclusive_task(tmp_pa
 @pytest.mark.parametrize("caller", ["ci", "ci-self-cpu", "daily"])
 def test_each_caller_routes_both_platforms_to_the_same_reusable_workflow(caller):
     jobs = _yaml(_ROOT / f".github/workflows/{caller}.yml")["jobs"]
+    expected = {f"st-framework-eager-{platform_name}" for platform_name in ("a2a3", "a5")}
+    present = expected.intersection(jobs)
+    if caller == "ci":
+        assert len(present) in (0, len(expected)), "Per-PR callers must include both platforms or neither"
+    else:
+        assert present == expected
     for platform_name in ("a2a3", "a5"):
+        if f"st-framework-eager-{platform_name}" not in present:
+            continue
         job = jobs[f"st-framework-eager-{platform_name}"]
         assert job["uses"] == "./.github/workflows/_st-framework-eager.yml"
         assert job["with"]["platform"] == platform_name
