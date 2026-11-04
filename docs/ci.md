@@ -1,5 +1,13 @@
 # CI Pipeline
 
+> Fork CI probe: pull requests currently run two A2/A3 onboard jobs, targeting
+> the `227` and `chuangzhi` runner labels, to measure scene tests without remote
+> kernel cache transfers. The docs workflow runs on `main` pushes or manual
+> dispatch, not pull requests. Other reusable workflows remain available, and
+> Daily job selection is unchanged. The full
+> matrix below describes the upstream pipeline for reference, not the active
+> pull request job set in this fork.
+
 ## Overview
 
 The CI pipeline maps test categories (st, ut-py, ut-cpp) × hardware tiers to GitHub Actions jobs. See [testing.md](testing.md) for full test organization and hardware classification.
@@ -15,7 +23,7 @@ Design principles:
 
 ## Full Job Matrix
 
-The complete test-type × hardware-tier matrix. Empty cells have no tests yet; only non-empty jobs exist in `ci.yml`.
+The complete upstream test-type × hardware-tier matrix. Empty cells have no tests yet; this fork's `ci.yml` currently calls only the A2/A3 onboard job from the matrix.
 
 | Category | github-hosted (no hardware) | a2a3 runner | a5 runner |
 | -------- | --------------------------- | ----------- | --------- |
