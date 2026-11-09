@@ -49,6 +49,8 @@ jobs:
       - name: Set up environment
         uses: ./.github/actions/setup-venv
         with:
+          install-torch: ${{ inputs.setup_variant == 'self-cpu' && 'false' || 'true' }}
+          system-site-packages: ${{ inputs.setup_variant == 'self-cpu' && 'true' || 'false' }}
           build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
           packages: "--no-build-isolation --config-settings=build.targets=_task_interface -e .[test]"
 

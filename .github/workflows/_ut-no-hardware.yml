@@ -90,6 +90,8 @@ jobs:
         if: inputs.setup_variant == 'self-cpu'
         uses: ./.github/actions/setup-venv
         with:
+          install-torch: "false"
+          system-site-packages: "true"
           packages: ".[test]"
 
       - name: Install MPI for Linux unit tests
