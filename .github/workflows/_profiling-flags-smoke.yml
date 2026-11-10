@@ -49,6 +49,7 @@ jobs:
       - name: Set up environment
         uses: ./.github/actions/setup-venv
         with:
+          toolchain-version: ${{ inputs.setup_variant == 'self-cpu' && '2026.11.1' || '' }}
           build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
           packages: "--no-build-isolation --config-settings=build.targets=_task_interface -e .[test]"
 

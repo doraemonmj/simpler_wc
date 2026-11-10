@@ -36,6 +36,7 @@ jobs:
       - name: Set up environment
         uses: ./.github/actions/setup-venv
         with:
+          toolchain-version: "2026.11.1"
           build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
           packages: "--no-build-isolation --config-settings=build.targets=build_package_a2a3 .[test]"
           install-torch: "false"
@@ -69,4 +70,4 @@ jobs:
           source /usr/local/Ascend/cann/set_env.sh
           DS_TESTS="examples/a2a3/host_build_graph/deepseek_v4_flash_decode examples/a2a3/tensormap_and_ringbuffer/deepseek_v4_flash_decode"
           task-submit --timeout 1800 --max-time 1800 --device auto --device-num 4 \
-            --run ".venv/bin/python -m pytest $DS_TESTS -m 'not sdma' --platform a2a3 --exclude-level 4 --manual only --device \$TASK_DEVICE -v --require-pto-isa --pto-session-timeout 1200"
+            --run "source /opt/pypto/toolchain/2026.11.1/activate.sh && .venv/bin/python -m pytest $DS_TESTS -m 'not sdma' --platform a2a3 --exclude-level 4 --manual only --device \$TASK_DEVICE -v --require-pto-isa --pto-session-timeout 1200"

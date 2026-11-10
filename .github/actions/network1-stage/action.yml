@@ -31,10 +31,8 @@ runs:
         REMOTE_WORKDIR="$NETWORK1_REMOTE_STAGING_ROOT/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
         RUN_DIR="$GITHUB_WORKSPACE/output/network1-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-        # The peer's proxy is only reachable from the peer, so its liveness
-        # check has to run there; split the address here where the parsing is
-        # readable. pip below reaches PyPI over https, so an unreachable
-        # https proxy is the one that actually stops the staging build.
+        # Python packages are offline, but a missing pinned PTO-ISA checkout
+        # may still be fetched while building the selected NPU target.
         proxy_hostport() {
           local hostport=${1#*://} host port
           hostport=${hostport##*@}
@@ -117,13 +115,13 @@ runs:
           export CMAKE_PREFIX_PATH="\${CMAKE_PREFIX_PATH:-}"
           export http_proxy='$NETWORK1_REMOTE_HTTP_PROXY' https_proxy='$NETWORK1_REMOTE_HTTPS_PROXY' no_proxy='$NETWORK1_REMOTE_NO_PROXY'
           export HTTP_PROXY='$NETWORK1_REMOTE_HTTP_PROXY' HTTPS_PROXY='$NETWORK1_REMOTE_HTTPS_PROXY' NO_PROXY='$NETWORK1_REMOTE_NO_PROXY'
-          source '$NETWORK1_REMOTE_CANN_ENV'
+          export PYPTO_CANN_SCRIPT='$NETWORK1_REMOTE_CANN_ENV'
+          source /opt/pypto/toolchain/2026.11.1/activate.sh
           set -u
-          python3 -m venv --system-site-packages .venv
+          python3.10 -m venv --system-site-packages .venv
           source .venv/bin/activate
-          pip install --upgrade pip
-          pip install 'ninja>=1.11'
-          pip install --config-settings=build.targets=build_package_$NETWORK1_PLATFORM '.[test]'
+          python -m pip install --no-index --find-links "\$PYPTO_WHEELHOUSE" --no-build-isolation \
+            --config-settings=build.targets=build_package_$NETWORK1_PLATFORM '.[test]'
         REMOTE_STAGE
 
         # One mpirun command line launches an L3 rank on each machine, so the
@@ -136,7 +134,8 @@ runs:
         MPI_PYTHON="/tmp/simpler-network1-mpi-python-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
         cat > "$MPI_PYTHON" <<LOCAL_LAUNCHER
         #!/usr/bin/env bash
-        source '$NETWORK1_CANN_ENV'
+        export PYPTO_CANN_SCRIPT='$NETWORK1_CANN_ENV'
+        source /opt/pypto/toolchain/2026.11.1/activate.sh
         set -e
         cd '$GITHUB_WORKSPACE'
         source '$RUN_DIR/local-task.env'
@@ -147,7 +146,8 @@ runs:
         network1_ssh "
           cat > '$MPI_PYTHON' <<'REMOTE_LAUNCHER'
         #!/usr/bin/env bash
-        source '$NETWORK1_REMOTE_CANN_ENV'
+        export PYPTO_CANN_SCRIPT='$NETWORK1_REMOTE_CANN_ENV'
+        source /opt/pypto/toolchain/2026.11.1/activate.sh
         set -e
         cd '$REMOTE_WORKDIR'
         source '$REMOTE_WORKDIR/output/network1-ci/remote-task.env'

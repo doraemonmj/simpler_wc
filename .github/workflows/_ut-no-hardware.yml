@@ -48,6 +48,7 @@ jobs:
           python-version: ${{ inputs.python_version }}
 
       - name: Set up C++ compiler
+        if: inputs.setup_variant == 'github'
         uses: ./.github/actions/setup-gcc-15
 
       - name: Install GoogleTest and AArch64 C++ compiler
@@ -90,6 +91,7 @@ jobs:
         if: inputs.setup_variant == 'self-cpu'
         uses: ./.github/actions/setup-venv
         with:
+          toolchain-version: "2026.11.1"
           packages: ".[test]"
 
       - name: Install MPI for Linux unit tests

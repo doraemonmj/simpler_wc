@@ -45,6 +45,10 @@ inputs:
       Hosts pip reaches without the proxy. Empty keeps the runner's own setting.
     required: false
     default: ""
+  toolchain-version:
+    description: Versioned pypto-toolchain bundle containing the offline simpler environment.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -58,10 +62,15 @@ runs:
         IN_HTTP_PROXY: ${{ inputs.http-proxy }}
         IN_HTTPS_PROXY: ${{ inputs.https-proxy }}
         IN_NO_PROXY: ${{ inputs.no-proxy }}
+        TOOLCHAIN_VERSION: ${{ inputs.toolchain-version }}
       run: |
         set -f
         if [ "${{ inputs.source-cann }}" = "true" ]; then
-          source "$CANN_ENV"
+          if [ -n "$TOOLCHAIN_VERSION" ]; then
+            export PYPTO_CANN_SCRIPT="$CANN_ENV"
+          else
+            source "$CANN_ENV"
+          fi
           # Older runner Ninja versions reject CMake's AICore depfile rules.
           BUILD_PACKAGES="$BUILD_PACKAGES ninja>=1.11"
         fi
@@ -74,20 +83,44 @@ runs:
         [ -z "$IN_HTTPS_PROXY" ] || export https_proxy="$IN_HTTPS_PROXY" HTTPS_PROXY="$IN_HTTPS_PROXY"
         [ -z "$IN_NO_PROXY" ] || export no_proxy="$IN_NO_PROXY" NO_PROXY="$IN_NO_PROXY"
 
+        if [ -n "$TOOLCHAIN_VERSION" ]; then
+          BUNDLE="/opt/pypto/toolchain/$TOOLCHAIN_VERSION"
+          test -f "$BUNDLE/activate.sh"
+          source "$BUNDLE/activate.sh"
+          for dir in "$BUNDLE/node/bin" "$BUNDLE/python/bin" "$BUNDLE/gcc/bin" "$BUNDLE/bin"; do
+            echo "$dir" >> "$GITHUB_PATH"
+          done
+          {
+            echo "PYPTO_TOOLCHAIN=$PYPTO_TOOLCHAIN"
+            echo "PYPTO_WHEELHOUSE=$PYPTO_WHEELHOUSE"
+            echo "CMAKE_PREFIX_PATH=$CMAKE_PREFIX_PATH"
+            echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+            [ -z "${PYPTO_CANN_SCRIPT:-}" ] || echo "PYPTO_CANN_SCRIPT=$PYPTO_CANN_SCRIPT"
+          } >> "$GITHUB_ENV"
+        fi
+
         VENV_ARGS=()
-        if [ "${{ inputs.system-site-packages }}" = "true" ]; then
+        if [ "${{ inputs.system-site-packages }}" = "true" ] || [ -n "$TOOLCHAIN_VERSION" ]; then
           VENV_ARGS+=(--system-site-packages)
         fi
 
         python3 -m venv "${VENV_ARGS[@]}" .venv
         source .venv/bin/activate
-        pip install --upgrade pip
-        if [ "${{ inputs.install-torch }}" = "true" ]; then
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-        fi
-        if [ -n "$BUILD_PACKAGES" ]; then
-          pip install $BUILD_PACKAGES
-        fi
-        if [ -n "$PACKAGES" ]; then
-          pip install $PACKAGES
+        if [ -n "$TOOLCHAIN_VERSION" ]; then
+          python -c 'import torch, nanobind, scikit_build_core; assert torch.version.cuda is None'
+          if [ -n "$PACKAGES" ]; then
+            pip install --no-index --find-links "$PYPTO_WHEELHOUSE" --no-build-isolation $PACKAGES
+          fi
+          pip check
+        else
+          pip install --upgrade pip
+          if [ "${{ inputs.install-torch }}" = "true" ]; then
+            pip install torch --index-url https://download.pytorch.org/whl/cpu
+          fi
+          if [ -n "$BUILD_PACKAGES" ]; then
+            pip install $BUILD_PACKAGES
+          fi
+          if [ -n "$PACKAGES" ]; then
+            pip install $PACKAGES
+          fi
         fi

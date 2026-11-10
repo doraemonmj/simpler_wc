@@ -40,6 +40,7 @@ jobs:
       - name: Set up environment
         uses: ./.github/actions/setup-venv
         with:
+          toolchain-version: "2026.11.1"
           build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
           packages: "--no-build-isolation --config-settings=build.targets=build_package_a2a3 .[test]"
           install-torch: "false"
@@ -64,7 +65,7 @@ jobs:
           source /usr/local/Ascend/cann/set_env.sh
           source .venv/bin/activate
           # RuntimeBuilder integration can refresh build/cache while publication probes read it.
-          ut_command="python -m pytest tests/ut -m 'requires_hardware and device_count' --platform a2a3 --device \$TASK_DEVICE -v &&"
+          ut_command="source /opt/pypto/toolchain/2026.11.1/activate.sh && python -m pytest tests/ut -m 'requires_hardware and device_count' --platform a2a3 --device \$TASK_DEVICE -v &&"
           ut_command+=" python -m pytest tests/ut -m 'requires_hardware and not device_count' -k TestRuntimeBuilderIntegration --platform a2a3 --device \$TASK_DEVICE -v &&"
           ut_command+=" python -m pytest tests/ut -m 'requires_hardware and not device_count' -k 'not TestRuntimeBuilderIntegration' --platform a2a3 --device \$TASK_DEVICE -n $DEVICE_NUM -v &&"
           ut_command+=" python3 -c \"import json,os; ids=os.environ['TASK_DEVICE'].split(','); json.dump({'version':{'major':1,'minor':0},'local':[{'npus':[{'id':i,'slots':1} for i in ids]}]}, open('tests/ut/cpp/build/resources.json','w'))\" &&"
@@ -84,4 +85,4 @@ jobs:
         run: |
           source /usr/local/Ascend/cann/set_env.sh
           task-submit --timeout 1800 --max-time 1800 --device auto --device-num 1 \
-            --run "tools/build_cann_examples.sh dav-c220-cube --run \$TASK_DEVICE"
+            --run "source /opt/pypto/toolchain/2026.11.1/activate.sh && tools/build_cann_examples.sh dav-c220-cube --run \$TASK_DEVICE"

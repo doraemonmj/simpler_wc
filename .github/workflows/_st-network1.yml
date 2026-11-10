@@ -180,6 +180,7 @@ jobs:
       - name: Set up environment
         uses: ./.github/actions/setup-venv
         with:
+          toolchain-version: "2026.11.1"
           packages: "--config-settings=build.targets=build_package_${{ inputs.platform }} .[test]"
           install-torch: "false"
           system-site-packages: "true"

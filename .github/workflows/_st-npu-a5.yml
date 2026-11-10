@@ -73,6 +73,7 @@ jobs:
       - name: Set up environment
         uses: ./.github/actions/setup-venv
         with:
+          toolchain-version: "2026.11.1"
           build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
           packages: "--no-build-isolation --config-settings=build.targets=build_package_a5 .[test]"
           install-torch: "false"
@@ -123,7 +124,7 @@ jobs:
           QUEUE_TIMEOUT_S=$((MAX_TIME_S + 1500))
           task-submit --timeout "$QUEUE_TIMEOUT_S" --max-time "$MAX_TIME_S" --device auto --device-num "$DEVICE_NUM" \
             --env SIMPLER_ENABLE_PTO_RDMA_WORKSPACE \
-            --run ".venv/bin/python -m pytest examples tests/st --platform a5 --exclude-level 4 --device \$TASK_DEVICE -v --require-pto-isa --pto-session-timeout $SESSION_TIMEOUT_S --manual '$MANUAL_MODE'"
+            --run "source /opt/pypto/toolchain/2026.11.1/activate.sh && .venv/bin/python -m pytest examples tests/st --platform a5 --exclude-level 4 --device \$TASK_DEVICE -v --require-pto-isa --pto-session-timeout $SESSION_TIMEOUT_S --manual '$MANUAL_MODE'"
 
       - name: DFX smokes (a5)
         if: inputs.include_dfx_smokes

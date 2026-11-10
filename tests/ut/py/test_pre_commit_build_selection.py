@@ -161,7 +161,7 @@ def test_self_cpu_uses_the_project_venv_for_lint() -> None:
     assert workflow.index(setup) < workflow.index(lint_only) < workflow.index(activate) < workflow.index(run)
     lint_only_block = workflow.split(lint_only, 1)[1].split(activate, 1)[0]
     assert "steps.lint-build.outputs.needs_build != 'true'" in lint_only_block
-    assert "run: python3 -m venv .venv" in lint_only_block
+    assert "run: python3 -m venv --system-site-packages .venv" in lint_only_block
     block = workflow.split(activate, 1)[1].split(run, 1)[0]
     assert "if: inputs.setup_variant == 'self-cpu'" in block
     assert 'run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"' in block

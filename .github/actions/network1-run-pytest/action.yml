@@ -34,9 +34,10 @@ runs:
         set -eo pipefail
         : network1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-remote
         cd $(quote "$REMOTE_WORKDIR")
-        source $(quote "$NETWORK1_REMOTE_CANN_ENV")
+        export PYPTO_CANN_SCRIPT=$(quote "$NETWORK1_REMOTE_CANN_ENV")
+        source /opt/pypto/toolchain/2026.11.1/activate.sh
         source .venv/bin/activate
-        export PYTHONPATH='' CMAKE_PREFIX_PATH=''
+        export PYTHONPATH='' CMAKE_PREFIX_PATH="\$PYPTO_TOOLCHAIN"
         export SIMPLER_SCHEDULER_TIMEOUT_MS=$(quote "$SIMPLER_SCHEDULER_TIMEOUT_MS")
         export SIMPLER_OP_EXECUTE_TIMEOUT_US=$(quote "$SIMPLER_OP_EXECUTE_TIMEOUT_US")
         export SIMPLER_STREAM_SYNC_TIMEOUT_MS=$(quote "$SIMPLER_STREAM_SYNC_TIMEOUT_MS")
@@ -81,9 +82,10 @@ runs:
         set -eo pipefail
         : network1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-local
         cd $(quote "$GITHUB_WORKSPACE")
-        source $(quote "$NETWORK1_CANN_ENV")
+        export PYPTO_CANN_SCRIPT=$(quote "$NETWORK1_CANN_ENV")
+        source /opt/pypto/toolchain/2026.11.1/activate.sh
         source .venv/bin/activate
-        export PYTHONPATH='' CMAKE_PREFIX_PATH=''
+        export PYTHONPATH='' CMAKE_PREFIX_PATH="\$PYPTO_TOOLCHAIN"
         export SIMPLER_SCHEDULER_TIMEOUT_MS=$(quote "$SIMPLER_SCHEDULER_TIMEOUT_MS")
         export SIMPLER_OP_EXECUTE_TIMEOUT_US=$(quote "$SIMPLER_OP_EXECUTE_TIMEOUT_US")
         export SIMPLER_STREAM_SYNC_TIMEOUT_MS=$(quote "$SIMPLER_STREAM_SYNC_TIMEOUT_MS")

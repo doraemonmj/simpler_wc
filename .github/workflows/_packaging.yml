@@ -86,6 +86,7 @@ jobs:
       - name: Install build + runtime deps in venv
         uses: ./.github/actions/setup-venv
         with:
+          toolchain-version: ${{ inputs.setup_variant == 'self-cpu' && '2026.11.1' || '' }}
           packages: "scikit-build-core>=0.10.0 nanobind>=2.0.0,<3 cmake>=3.20 ninja>=1.11 pytest>=6.0"
 
       - name: Run packaging matrix

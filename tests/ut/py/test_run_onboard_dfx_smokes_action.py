@@ -39,6 +39,8 @@ def test_onboard_dfx_smokes_adapt_to_device_count_without_overlap(
         directory.mkdir(parents=True)
 
     (workspace / ".venv/bin/activate").write_text(":\n")
+    toolchain_activate = tmp_path / "toolchain-activate.sh"
+    toolchain_activate.write_text('[[ -n "${TASK_DEVICE:-}" ]] || exit 94\ntouch "$FAKE_STATE/toolchain-activated"\n')
     cann_env = tmp_path / "set_env.sh"
     cann_env.write_text(":\n")
     task_submit = bin_dir / "task-submit"
@@ -120,8 +122,11 @@ def test_onboard_dfx_smokes_adapt_to_device_count_without_overlap(
             "RUNNER_TEMP": str(runner_temp),
         }
     )
+    script = _run_script()
+    bundle_path = "/opt/pypto/toolchain/2026.11.1/activate.sh"
+    assert script.count(bundle_path) == 1
     result = subprocess.run(
-        ["bash", "-c", _run_script()],
+        ["bash", "-c", script.replace(bundle_path, str(toolchain_activate))],
         cwd=workspace,
         env=env,
         text=True,
@@ -130,6 +135,7 @@ def test_onboard_dfx_smokes_adapt_to_device_count_without_overlap(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+    assert (state_dir / "toolchain-activated").exists()
     assert not (state_dir / "overlap").exists()
     invocations = (state_dir / "invocations").read_text().splitlines()
     # Each platform starts six DFX jobs. The count determines the per-device

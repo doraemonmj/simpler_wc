@@ -83,14 +83,10 @@ jobs:
       - name: Verify provisioned toolchain
         if: inputs.setup_variant == 'self-cpu'
         run: |
+          source /opt/pypto/toolchain/2026.11.1/activate.sh
           command -v ninja
-          command -v g++
+          command -v g++-15
           command -v dot
-          if ! command -v g++-15 >/dev/null 2>&1; then
-            mkdir -p "$RUNNER_TEMP/bin"
-            ln -sf "$(command -v g++)" "$RUNNER_TEMP/bin/g++-15"
-            echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-          fi
 
       - name: Set up Python ${{ inputs.python_version }}
         if: inputs.setup_variant == 'github'
@@ -104,6 +100,7 @@ jobs:
       - name: Set up environment
         uses: ./.github/actions/setup-venv
         with:
+          toolchain-version: ${{ inputs.setup_variant == 'self-cpu' && '2026.11.1' || '' }}
           build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
           packages: "--no-build-isolation --config-settings=build.targets=build_package_a5sim .[test]"
 

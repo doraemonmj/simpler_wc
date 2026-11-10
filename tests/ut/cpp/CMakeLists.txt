@@ -111,16 +111,25 @@ option(SIMPLER_ENABLE_HARDWARE_TESTS
 # `undefined reference to testing::internal::EqFailure(...)` — see
 # docs/troubleshooting/ut-cpp-gtest-abi.md for the workaround.
 # ---------------------------------------------------------------------------
-if(APPLE)
-    set(GTEST_SEARCH_PATHS /opt/homebrew/lib /usr/local/lib)
-    set(GTEST_INCLUDE_DIRS /opt/homebrew/include /usr/local/include)
+find_package(GTest CONFIG QUIET)
+if(GTest_FOUND)
+    # The shared toolchain installs a relocatable CMake package under its
+    # versioned prefix. Imported targets carry the matching include directory.
+    set(GTEST_LIB GTest::gtest)
+    set(GTEST_MAIN_LIB GTest::gtest_main)
+    set(GTEST_INCLUDE_DIRS "")
 else()
-    set(GTEST_SEARCH_PATHS /usr/local/lib64 /usr/local/lib)
-    set(GTEST_INCLUDE_DIRS /usr/local/include)
-endif()
+    if(APPLE)
+        set(GTEST_SEARCH_PATHS /opt/homebrew/lib /usr/local/lib)
+        set(GTEST_INCLUDE_DIRS /opt/homebrew/include /usr/local/include)
+    else()
+        set(GTEST_SEARCH_PATHS /usr/local/lib64 /usr/local/lib)
+        set(GTEST_INCLUDE_DIRS /usr/local/include)
+    endif()
 
-find_library(GTEST_LIB      gtest      PATHS ${GTEST_SEARCH_PATHS})
-find_library(GTEST_MAIN_LIB gtest_main PATHS ${GTEST_SEARCH_PATHS})
+    find_library(GTEST_LIB      gtest      PATHS ${GTEST_SEARCH_PATHS})
+    find_library(GTEST_MAIN_LIB gtest_main PATHS ${GTEST_SEARCH_PATHS})
+endif()
 
 if(NOT GTEST_LIB OR NOT GTEST_MAIN_LIB)
     message(STATUS "System GoogleTest not found — fetching via FetchContent")

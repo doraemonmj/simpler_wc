@@ -37,6 +37,8 @@ runs:
         trap 'rm -f "$DRIVER"' EXIT
         cat > "$DRIVER" <<'DFX_DRIVER'
         set -uo pipefail
+        source /opt/pypto/toolchain/2026.11.1/activate.sh || exit 1
+        source .venv/bin/activate || exit 1
 
         platform=$1
         device_list=${2//[[:space:]]/}

@@ -497,33 +497,23 @@ def test_scene_tests_request_graphviz(workflow_name: str) -> None:
 
 @pytest.mark.parametrize("workflow_name", ["_st-sim-a2a3.yml", "_st-sim-a5.yml"])
 @pytest.mark.parametrize("has_gcc_15", [False, True])
-def test_self_cpu_scene_tests_preserve_the_preprovisioned_compiler_contract(
+def test_self_cpu_scene_tests_require_the_versioned_compiler(
     tmp_path: Path, workflow_name: str, has_gcc_15: bool
 ) -> None:
-    bin_dir = tmp_path / "preinstalled-bin"
+    bin_dir = tmp_path / "bundle-bin"
     bin_dir.mkdir()
-    for command in ("bash", "mkdir", "ln"):
-        executable = shutil.which(command)
-        assert executable is not None
-        (bin_dir / command).symlink_to(executable)
     for command in ("ninja", "dot"):
         _write_command(bin_dir / command)
     _write_command(bin_dir / "g++", 'if [ "${1:-}" = -dumpversion ]; then echo 12.3.0; fi')
     if has_gcc_15:
         _write_command(bin_dir / "g++-15", 'if [ "${1:-}" = -dumpversion ]; then echo 15.2.0; fi')
 
-    runner_temp = tmp_path / "runner-temp"
-    runner_temp.mkdir()
-    github_path = tmp_path / "github-path"
+    activate = tmp_path / "activate.sh"
+    activate.write_text(f'export PATH="{bin_dir}:$PATH"\n')
     script = _named_step(REPO_ROOT / ".github/workflows" / workflow_name, "Verify provisioned toolchain")["run"]
+    script = script.replace("/opt/pypto/toolchain/2026.11.1/activate.sh", str(activate))
     env = os.environ.copy()
-    env.update(
-        {
-            "GITHUB_PATH": str(github_path),
-            "PATH": str(bin_dir),
-            "RUNNER_TEMP": str(runner_temp),
-        }
-    )
+    env["PATH"] = "/usr/bin:/bin"
 
     result = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
@@ -533,15 +523,12 @@ def test_self_cpu_scene_tests_preserve_the_preprovisioned_compiler_contract(
         check=False,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    alias = runner_temp / "bin/g++-15"
     if has_gcc_15:
-        assert not alias.exists()
-        assert not github_path.exists()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert str(bin_dir / "g++-15") in result.stdout
     else:
-        assert alias.is_symlink()
-        assert alias.resolve() == bin_dir / "g++"
-        assert github_path.read_text().splitlines() == [str(runner_temp / "bin")]
+        assert result.returncode != 0
+        assert not (bin_dir / "g++-15").exists()
 
 
 @pytest.mark.parametrize("path", (ACTION_PATH, APT_ACTION_PATH, *WORKFLOW_PATHS), ids=lambda path: path.name)
