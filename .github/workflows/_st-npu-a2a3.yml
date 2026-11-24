@@ -27,6 +27,8 @@ on:
 
 jobs:
   run:
+    # This fork branch validates CPU runners only.
+    if: false
     name: st-onboard-a2a3
     runs-on: ${{ fromJSON(inputs.runs_on) }}
     timeout-minutes: 60
