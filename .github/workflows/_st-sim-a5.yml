@@ -3,6 +3,9 @@ name: Simulation Scene Tests (a5sim)
 permissions:
   contents: read
 
+env:
+  LD_LIBRARY_PATH: /opt/gcc-15/lib
+
 on:
   workflow_call:
     inputs:
