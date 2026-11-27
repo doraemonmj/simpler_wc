@@ -1,0 +1,21 @@
+name: A5 UT runner readiness
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ut-a5:
+    uses: hw-native-sys/simpler/.github/workflows/_ut-npu-a5.yml@dcb6a367f1783d8582e182fa4374b820e5039b73
+    with:
+      repository: ${{ github.repository }}
+      ref: ${{ github.ref }}
+      runs_on: '["self-hosted","a5"]'
+      include_cann_examples: true
