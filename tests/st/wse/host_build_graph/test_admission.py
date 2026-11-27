@@ -199,7 +199,8 @@ def test_pe_requires_explicit_core_matching_calendar_row(tmp_path, st_platform):
         check=True,
         timeout=60,
     )
-    result = subprocess.run([str(probe)], capture_output=True, text=True, timeout=60, check=True)
+    result = subprocess.run([str(probe)], capture_output=True, text=True, timeout=60, check=False)
+    assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
         "explicit_core_0 accepted",
         "wrong_calendar_core rejected",
