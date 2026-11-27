@@ -16,7 +16,11 @@
 
 namespace wse::temporary {
 
-enum class CounterStatus { OK, READY, NOT_READY, INVALID_ARGUMENT, OVERFLOW };
+// Keep the original spelling available to callers whose SDK does not define OVERFLOW.
+#pragma push_macro("OVERFLOW")
+#undef OVERFLOW
+enum class CounterStatus { OK, READY, NOT_READY, INVALID_ARGUMENT, VALUE_OVERFLOW, OVERFLOW = VALUE_OVERFLOW };
+#pragma pop_macro("OVERFLOW")
 
 // Caller-owned uint64_t words use lock-free atomics, including across kernel DSOs.
 static_assert(__atomic_always_lock_free(sizeof(uint64_t), nullptr));
@@ -46,7 +50,7 @@ inline CounterSignalResult counter_signal(CounterView view, size_t index, uint64
     auto *word = &view.data[index];
     auto old = __atomic_load_n(word, __ATOMIC_RELAXED);
     for (;;) {
-        if (delta > std::numeric_limits<uint64_t>::max() - old) return {CounterStatus::OVERFLOW, old, old};
+        if (delta > std::numeric_limits<uint64_t>::max() - old) return {CounterStatus::VALUE_OVERFLOW, old, old};
         if (__atomic_compare_exchange_n(word, &old, old + delta, true, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
             return {CounterStatus::OK, old, old + delta};
     }
