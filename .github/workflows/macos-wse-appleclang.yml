@@ -1,0 +1,59 @@
+name: macOS WSE Apple Clang
+on:
+  push:
+    branches: [ci/macos-wse-appleclang]
+permissions:
+  contents: read
+jobs:
+  wse:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      CC: /usr/bin/clang
+      CXX: /usr/bin/clang++
+      SIMPLER_SCHEDULER_TIMEOUT_MS: "60000"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python
+        with:
+          python-version: "3.10"
+      - uses: ./.github/actions/setup-gcc-15
+        with:
+          install-graphviz: "true"
+      - uses: ./.github/actions/cache-pip
+      - uses: ./.github/actions/setup-venv
+        id: setup
+        with:
+          build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
+          packages: "--no-build-isolation --config-settings=build.targets=build_package_wsesim .[test]"
+      - name: Verify native WSE compiler and linked C++ library
+        run: |
+          /usr/bin/clang++ --version
+          .venv/bin/python - <<'PYTHON'
+          from pathlib import Path
+          from simpler_setup.kernel_compiler import KernelCompiler
+          compiler = KernelCompiler("wsesim")
+          assert compiler.gxx15.cxx_path == "/usr/bin/clang++"
+          source = Path("tests/st/wse/host_build_graph/tile_operations/kernels/ffn_0.cpp")
+          includes = compiler.get_orchestration_include_dirs("host_build_graph")
+          Path("/tmp/ffn-appleclang.dylib").write_bytes(compiler.compile_incore(str(source), extra_include_dirs=includes))
+          PYTHON
+          otool -L /tmp/ffn-appleclang.dylib
+          otool -L /tmp/ffn-appleclang.dylib | grep -F /usr/lib/libc++.1.dylib
+      - name: WSE unit tests
+        if: "!cancelled() && steps.setup.outcome == 'success'"
+        run: .venv/bin/python -m pytest tests/ut/py/test_wse*.py -v --tb=short
+      - name: Startup rollback and PE admission
+        id: focused
+        if: "!cancelled() && steps.setup.outcome == 'success'"
+        run: |
+          .venv/bin/python -m pytest tests/st/wse/host_build_graph/test_recovery.py \
+            tests/st/wse/host_build_graph/test_admission.py::test_pe_requires_explicit_core_matching_calendar_row \
+            --platform wsesim --device 0-15 --max-parallel 1 --require-pto-isa --manual include -v
+      - name: WSE daily scene tests
+        if: "!cancelled() && steps.setup.outcome == 'success'"
+        run: |
+          .venv/bin/python -m pytest examples tests/st --platform wsesim --device 0-15 --max-parallel 1 -v \
+            --pto-session-timeout 1800 --require-pto-isa --manual include

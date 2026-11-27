@@ -227,6 +227,8 @@ class KernelCompiler:
             self.host_gxx = GxxToolchain(prefer_g15=bool(self._sanitizers))
 
         self.gxx15 = Gxx15Toolchain()
+        if platform == "wsesim" and sys.platform == "darwin":
+            self.gxx15.cxx_path = "/usr/bin/clang++"
         self.ccu = CCUToolchain(self.host_gxx) if platform == "a5" else None
 
     def _sanitizer_flags(self, toolchain) -> list[str]:

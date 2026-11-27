@@ -135,8 +135,8 @@ public:
         storage_ = static_cast<BlockOperationStorage::Slot *>(
             scope_.get_storage(scope_.storage_context, slot, sizeof(SharedTileState))
         );
-        std::lock_guard lock(*storage_);
-        state_ = static_cast<SharedTileState *>(storage_->data);
+        std::lock_guard lock(storage_->mutex);
+        state_ = static_cast<SharedTileState *>(storage_->data.get());
         if (!storage_->initialized) {
             state_ = new (state_) SharedTileState{};
             state_->producer = producer;
@@ -152,29 +152,31 @@ public:
     }
     void publish(uint64_t generation, const T &value) {
         scope_.validate();
-        std::lock_guard lock(*storage_);
+        std::unique_lock lock(storage_->mutex);
         if (pe_ != state_->producer || !generation || state_->generation == UINT64_MAX ||
             generation != state_->generation + 1)
             throw std::invalid_argument("WSE shared tile publication order or producer mismatch");
         if (state_->generation && state_->consumed != state_->consumers) trace(OperationEvent::WAIT, generation);
-        while (state_->generation && state_->consumed != state_->consumers)
-            storage_->wait();
+        storage_->changed.wait(lock, [&] {
+            return !state_->generation || state_->consumed == state_->consumers;
+        });
         std::copy(value.values.begin(), value.values.end(), state_->values);
         state_->consumed = 0;
         state_->generation = generation;
         trace(OperationEvent::PUBLISH, generation);
-        storage_->notify_all();
+        storage_->changed.notify_all();
     }
     T read(uint64_t generation) {
         scope_.validate();
-        std::lock_guard lock(*storage_);
+        std::unique_lock lock(storage_->mutex);
         const uint32_t bit = 1u << pe_;
         if (!generation || !(state_->consumers & bit) || generation < state_->generation ||
             (generation > state_->generation && generation - state_->generation != 1))
             throw std::invalid_argument("WSE shared tile read order or consumer mismatch");
         if (state_->generation < generation) trace(OperationEvent::WAIT, generation);
-        while (state_->generation < generation)
-            storage_->wait();
+        storage_->changed.wait(lock, [&] {
+            return state_->generation >= generation;
+        });
         if (state_->generation != generation || (state_->consumed & bit))
             throw std::invalid_argument("stale or duplicate WSE shared tile read");
         trace(OperationEvent::READ, generation);
@@ -182,7 +184,7 @@ public:
         std::copy_n(state_->values, T::rows * T::cols, result.values.begin());
         state_->consumed |= bit;
         trace(OperationEvent::CONSUMED, generation);
-        storage_->notify_all();
+        storage_->changed.notify_all();
         return result;
     }
 };
