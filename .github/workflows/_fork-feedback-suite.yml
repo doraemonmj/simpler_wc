@@ -1,0 +1,30 @@
+name: Fork feedback smoke suite
+on:
+  workflow_call:
+    inputs:
+      suite:
+        required: true
+        type: string
+      ref:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  smoke:
+    name: ${{ inputs.suite }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          sparse-checkout: .github/feedback-smoke
+      - name: Verify the pinned merge and allow time for progress publication
+        env:
+          EXPECTED: ${{ inputs.ref }}
+          SUITE: ${{ inputs.suite }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          test -f .github/feedback-smoke/pr-3265.md
+          if [ "$SUITE" = ut-a5 ]; then sleep 50; else sleep 100; fi
