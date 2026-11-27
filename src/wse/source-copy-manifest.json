@@ -50,7 +50,7 @@
     {
       "source": "src/a5/platform/sim/host/device_runner.h",
       "destination": "src/wse/platform/sim/host/device_runner.h",
-      "sha256": "cfa6676b9b03820390f24da334dc59cdf27ccf92efed452c544d460d1f309a94"
+      "sha256": "0473c6ccf3f514c334717ce2eb40d39387a4637424efb781d57b4eac959b66ca"
     },
     {
       "source": "src/a5/platform/sim/host/runtime_c_api.cpp",
