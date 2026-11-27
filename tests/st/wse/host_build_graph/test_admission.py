@@ -79,12 +79,15 @@ def admission_artifacts(tmp_path_factory):
         (path / f"orch-{arch}.so").write_bytes(compiler.compile_orchestration("host_build_graph", str(orch)))
     # A legacy artifact is valid ELF with a kernel entry but has no family declaration.
     subprocess.run(["c++", "-shared", "-fPIC", str(source), "-o", str(path / "legacy.so")], check=True)
-    unknown = path / "unknown.cpp"
-    unknown.write_text('extern "C" const char *simpler_cpu_sim_target() { return "unknown"; }\n')
-    subprocess.run(["c++", "-shared", "-fPIC", str(source), str(unknown), "-o", str(path / "unknown.so")], check=True)
-    for arch in ("wse", "a5"):
+    for name, target in (("previous-wse", "wsesim"), ("unknown", "unknown")):
+        metadata = path / f"{name}.cpp"
+        metadata.write_text(f'extern "C" const char *simpler_cpu_sim_target() {{ return "{target}"; }}\n')
+        subprocess.run(
+            ["c++", "-shared", "-fPIC", str(source), str(metadata), "-o", str(path / f"{name}.so")], check=True
+        )
+    for arch, target in (("wse", "wsesim-v2"), ("a5", "a5sim")):
         missing = path / f"missing-{arch}.cpp"
-        missing.write_text(f'extern "C" const char *simpler_cpu_sim_target() {{ return "{arch}sim"; }}\n')
+        missing.write_text(f'extern "C" const char *simpler_cpu_sim_target() {{ return "{target}"; }}\n')
         subprocess.run(["c++", "-shared", "-fPIC", str(missing), "-o", str(path / f"missing-{arch}.so")], check=True)
     return path, marker
 
@@ -111,7 +114,10 @@ def test_prebuilt_target_admission(arch, admission_artifacts):
             arch,
             str(path / f"orch-{arch}.so"),
             str(marker),
-            *(str(path / f"{kind}.so") for kind in (opposite, "legacy", "unknown", f"missing-{arch}", arch, arch)),
+            *(
+                str(path / f"{kind}.so")
+                for kind in (opposite, "previous-wse", "legacy", "unknown", f"missing-{arch}", arch, arch)
+            ),
         ],
         capture_output=True,
         text=True,
@@ -120,6 +126,7 @@ def test_prebuilt_target_admission(arch, admission_artifacts):
     )
     # Rejections precede hooks; a subsequent good image registers once and deduplicates.
     assert json.loads(result.stdout.splitlines()[-1]) == [
+        [-1000, ""],
         [-1000, ""],
         [-1000, ""],
         [-1000, ""],
