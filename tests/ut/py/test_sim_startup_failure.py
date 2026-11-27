@@ -57,7 +57,8 @@ def _run_scene(arch, runtime, library):
     scene = _ROOT / base / arch / runtime / "vector_example/test_vector_example.py"
     env = dict(os.environ)
     if library is not None:
-        env["LD_PRELOAD"] = (env["LD_PRELOAD"] + ":" if env.get("LD_PRELOAD") else "") + str(library)
+        preload = "DYLD_INSERT_LIBRARIES" if sys.platform == "darwin" else "LD_PRELOAD"
+        env[preload] = os.pathsep.join(filter(None, (env.get(preload), str(library))))
     command = [
         sys.executable,
         "-m",
