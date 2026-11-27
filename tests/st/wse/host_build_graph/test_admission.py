@@ -186,7 +186,7 @@ def test_pe_requires_explicit_core_matching_calendar_row(tmp_path, st_platform):
     probe = tmp_path / "pe-admission"
     subprocess.run(
         [
-            compiler.gxx15.cxx_path,
+            compiler.host_gxx.cxx_path,
             "-std=c++17",
             "-D__CPU_SIM",
             *(f"-I{path}" for path in compiler.get_orchestration_include_dirs("host_build_graph")),
