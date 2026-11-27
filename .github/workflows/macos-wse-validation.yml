@@ -1,0 +1,35 @@
+name: macOS WSE validation
+on:
+  push:
+    branches: [ci/macos-wse-validation]
+permissions:
+  contents: read
+jobs:
+  wse:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      SIMPLER_SCHEDULER_TIMEOUT_MS: "60000"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python
+        with:
+          python-version: "3.10"
+      - uses: ./.github/actions/setup-gcc-15
+        with:
+          install-graphviz: "true"
+      - uses: ./.github/actions/cache-pip
+      - uses: ./.github/actions/setup-venv
+        id: setup
+        with:
+          build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
+          packages: "--no-build-isolation --config-settings=build.targets=build_package_wsesim .[test]"
+      - name: WSE unit tests
+        run: .venv/bin/python -m pytest tests/ut/py/test_wse*.py -v --tb=short
+      - name: WSE daily scene tests
+        if: "!cancelled() && steps.setup.outcome == 'success'"
+        run: |
+          .venv/bin/python -m pytest examples tests/st --platform wsesim --device 0-15 --max-parallel 1 -v \
+            --pto-session-timeout 1800 --require-pto-isa --manual include
