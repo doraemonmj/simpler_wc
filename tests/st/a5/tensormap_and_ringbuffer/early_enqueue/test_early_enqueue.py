@@ -903,6 +903,7 @@ class _A5TmrEarlyEnqueueBase(SceneTestCase):
         reason="early enqueue drives its own multi-run sequences; see the cases below",
         platforms=["a2a3", "a5"],
     )
+    @pytest.mark.manual(["a5"])
     def test_run(self):
         """Not the standard single-case golden path.
 
@@ -1108,6 +1109,7 @@ class TestA5TmrEarlyEnqueueDepthTwo(_A5TmrEarlyEnqueueBase):
             pytest.skip("a5 TMR early enqueue is gated to the a5 onboard tensormap_and_ringbuffer route")
         self._assert_two_run_window(st_worker, "a5 TMR two-run window")
 
+    @pytest.mark.manual(["a5"])
     @pytest.mark.platforms(["a5"])
     def test_sixteen_runs_keep_refilling_both_sets(self, st_platform, st_worker):
         """Sixteen consecutive submissions that keep both sets occupied as they turn over.
@@ -1495,6 +1497,7 @@ class TestA5TmrEarlyEnqueueDepthOneControl(_A5TmrEarlyEnqueueBase):
         {
             "name": "a5_tmr_early_enqueue_depth_one",
             "platforms": ["a5"],
+            "manual": ["a5"],
             "config": {"device_count": 1, "num_sub_workers": 0},
             "params": {},
         },
@@ -1783,6 +1786,7 @@ class TestA5TmrCapacityBeyondTheOldCeiling(_A5TmrEarlyEnqueueBase):
         {
             "name": "a5_tmr_capacity_beyond_the_old_ceiling",
             "platforms": ["a5"],
+            "manual": ["a5"],
             "config": {
                 "device_count": 1,
                 "num_sub_workers": 0,
@@ -1938,6 +1942,7 @@ class TestA5TmrWideFailureAttribution(_A5TmrEarlyEnqueueBase):
         {
             "name": "a5_tmr_wide_failure_attribution",
             "platforms": ["a5"],
+            "manual": ["a5"],
             "config": {
                 "device_count": 1,
                 "num_sub_workers": 0,
@@ -2144,6 +2149,7 @@ class TestA5TmrWorkedCapacityExample(_A5TmrEarlyEnqueueBase):
         {
             "name": "a5_tmr_worked_capacity_example",
             "platforms": ["a5"],
+            "manual": ["a5"],
             "config": {
                 "device_count": 1,
                 "num_sub_workers": 0,

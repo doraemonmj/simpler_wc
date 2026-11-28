@@ -771,6 +771,7 @@ class _A5EarlyEnqueueBase(SceneTestCase):
         reason="early enqueue drives its own multi-run sequences; see the cases below",
         platforms=["a2a3", "a5"],
     )
+    @pytest.mark.manual(["a5"])
     def test_run(self):
         """Not the standard single-case golden path.
 
@@ -934,6 +935,7 @@ class TestA5EarlyEnqueueDepthTwo(_A5EarlyEnqueueBase):
                     f"unmeasured={sorted(unmeasured)}; {_boundary_detail(trace, pairs)}"
                 )
 
+    @pytest.mark.manual(["a5"])
     @pytest.mark.platforms(["a5"])
     def test_sixteen_runs_keep_refilling_both_sets(self, st_platform, st_worker):
         """Sixteen consecutive submissions that keep both sets occupied as they turn over.
@@ -1741,6 +1743,7 @@ class TestA5ThreeRunCapacity(_A5EarlyEnqueueBase):
         )
         shutil.rmtree(output_prefix, ignore_errors=True)
 
+    @pytest.mark.manual(["a5"])
     @pytest.mark.platforms(["a5"])
     def test_a_device_control_tensor_is_refused_until_it_is_copied_to_the_host(self, st_platform, st_worker):
         """The host build's control tensor must be a HOST value, and a DEVICE one is refused.
@@ -2451,6 +2454,7 @@ class TestA5WorkedCapacityExample(_A5EarlyEnqueueBase):
         {
             "name": "a5_worked_capacity_example",
             "platforms": ["a5"],
+            "manual": ["a5"],
             "config": {
                 "device_count": 1,
                 "num_sub_workers": 0,

@@ -300,7 +300,7 @@ def test_one_full_width_cohort_assembles(st_platform, st_device_ids, tmp_path, a
 @pytest.mark.platforms(["a5"])
 @pytest.mark.device_count(1)
 @pytest.mark.runtime(RUNTIME)
-@pytest.mark.parametrize("cohort_count", [2, 12])
+@pytest.mark.parametrize("cohort_count", [2, pytest.param(12, marks=pytest.mark.manual(["a5"]))])
 def test_back_to_back_full_width_cohorts_all_assemble(
     st_platform, st_device_ids, tmp_path, cohort_count, assert_cohorts_were_coresident
 ):

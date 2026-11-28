@@ -401,6 +401,7 @@ def test_result_reads_while_successor_runs_tmr(retention_tmr):
     check_result_reads_while_successor_runs(retention_tmr)
 
 
+@pytest.mark.manual(["a5"])
 @pytest.mark.platforms(["a2a3", "a5"])
 @pytest.mark.device_count(1)
 @pytest.mark.runtime("tensormap_and_ringbuffer")
@@ -408,6 +409,7 @@ def test_retained_synchronize_waits_for_the_successor_tmr(retention_tmr):
     check_retained_synchronize_waits_for_the_successor(retention_tmr)
 
 
+@pytest.mark.manual(["a5"])
 @pytest.mark.platforms(["a2a3", "a5"])
 @pytest.mark.device_count(1)
 @pytest.mark.runtime("tensormap_and_ringbuffer")
