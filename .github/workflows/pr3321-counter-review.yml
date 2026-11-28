@@ -1,0 +1,31 @@
+name: macOS WSE counter review
+on:
+  push:
+    branches: [ci/pr3321-counter-review]
+permissions:
+  contents: read
+jobs:
+  counter:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Compile and run the public counter API with Apple Clang
+        run: |
+          cat > "$RUNNER_TEMP/probe.cpp" <<'CPP'
+          #include <math.h>
+          #ifndef OVERFLOW
+          #define OVERFLOW 3
+          #endif
+          constexpr int sdk_overflow = OVERFLOW;
+          #include <wse/counter_ops.h>
+          static_assert(OVERFLOW == sdk_overflow);
+          static_assert(static_cast<int>(wse::CounterStatus::VALUE_OVERFLOW) == 4);
+          int main() {
+              uint64_t value = UINT64_MAX;
+              auto result = wse::counter_signal({&value, 1}, 0);
+              return !(result.status == wse::CounterStatus::VALUE_OVERFLOW &&
+                       result.old_value == value && result.new_value == value && value == UINT64_MAX);
+          }
+          CPP
+          clang++ -std=c++17 -Wall -Werror -Isrc/wse/platform/include "$RUNNER_TEMP/probe.cpp" -o "$RUNNER_TEMP/probe"
+          "$RUNNER_TEMP/probe"
