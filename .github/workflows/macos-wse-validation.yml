@@ -1,0 +1,49 @@
+name: macOS WSE validation
+on:
+  push:
+    branches: [ci/macos-wse-validation]
+permissions:
+  contents: read
+jobs:
+  wse:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      SIMPLER_SCHEDULER_TIMEOUT_MS: "60000"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python
+        with:
+          python-version: "3.10"
+      - uses: ./.github/actions/setup-gcc-15
+        with:
+          install-graphviz: "true"
+      - uses: ./.github/actions/cache-pip
+      - uses: ./.github/actions/setup-venv
+        id: setup
+        with:
+          build-packages: "scikit-build-core nanobind<3 cmake>=3.20"
+          packages: "--no-build-isolation --config-settings=build.targets=build_package_wsesim .[test]"
+      - name: Change detection on system Bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/system-bash"
+          ln -s /bin/bash "$RUNNER_TEMP/system-bash/bash"
+          export PATH="$RUNNER_TEMP/system-bash:$PATH"
+          bash --version
+          .venv/bin/python -m pytest tests/ut/py/test_ci_base_resolution.py tests/ut/py/test_wse_change_detection.py -v --tb=short
+      - name: WSE unit tests
+        run: .venv/bin/python -m pytest tests/ut/py/test_wse*.py tests/ut/py/wse -v --tb=short
+      - name: Startup rollback and PE admission
+        id: focused
+        if: "!cancelled() && steps.setup.outcome == 'success'"
+        run: |
+          .venv/bin/python -m pytest tests/st/wse/host_build_graph/test_recovery.py \
+            tests/st/wse/host_build_graph/test_admission.py::test_pe_requires_explicit_core_matching_calendar_row \
+            --platform wsesim --device 0-15 --max-parallel 1 --require-pto-isa --manual include -v
+      - name: WSE daily scene tests
+        if: success()
+        run: |
+          .venv/bin/python -m pytest examples tests/st --platform wsesim --device 0-15 --max-parallel 1 -v \
+            --pto-session-timeout 1800 --require-pto-isa --manual include
