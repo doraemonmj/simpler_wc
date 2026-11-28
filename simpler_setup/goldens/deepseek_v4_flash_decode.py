@@ -22,14 +22,13 @@ Two products, for the two modes of the standalone case in
 ``examples/a2a3/{tensormap_and_ringbuffer,host_build_graph}/deepseek_v4_flash_decode/``:
 
 - ``PARAM_SPECS`` — the shape / dtype / rank fan-out of every chip-program
-  parameter. Allocation-free and torch-free, so the default (``--skip-golden``)
+  parameter. Allocation-free and torch-free, so the smoke (``--skip-golden``)
   run sizes its child-memory buffers from it without materializing a byte on the
   host.
 - ``param_tensors(seed)`` — the host fixture, one tensor at a time in the draw
-  order below, for ``--no-skip-golden``. There is deliberately no golden:
-  upstream ``decode_fwd`` has none either (component-level golden checks live
-  with the standalone kernels there), and a full-network torch reference does not
-  exist in either repo.
+  order below, for full-input runs. Daily uses these weights for CPU LM-head
+  and greedy-token checks. Upstream provides component-level references in
+  the standalone kernels and runs the full-network case with ``golden_fn=None``.
 
 Per-rank ``_r0`` / ``_r1`` naming: the pypto fixture stacks every parameter as
 ``[N_RANKS=2, *tail]`` and slices ``value[r]`` per rank at submit time. Each base

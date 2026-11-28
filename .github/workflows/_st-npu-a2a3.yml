@@ -24,6 +24,10 @@ on:
         required: false
         default: exclude
         type: string
+      separate_deepseek_job:
+        description: The dedicated Daily model job covers both DeepSeek runtimes.
+        type: boolean
+        default: false
 
 jobs:
   run:
@@ -103,10 +107,16 @@ jobs:
       # Each names `examples tests/st`, so a case cannot fall between them by
       # living under a path one of them does not walk.
       - name: Run pytest scene tests (a2a3)
+        env:
+          SEPARATE_DEEPSEEK_JOB: ${{ inputs.separate_deepseek_job }}
         run: |
           source /usr/local/Ascend/cann/set_env.sh
+          model_filter=""
+          if [[ "$SEPARATE_DEEPSEEK_JOB" == true ]]; then
+            model_filter="--ignore-glob='*/a2a3/*/deepseek_v4_flash_decode'"
+          fi
           task-submit --timeout 1800 --max-time 1800 --device auto --device-num "$DEVICE_NUM" \
-            --run ".venv/bin/python -m pytest examples tests/st -m 'not sdma and not sdma_fault' --platform a2a3 --exclude-level 4 --device \$TASK_DEVICE -v --require-pto-isa --pto-session-timeout 1200 --manual '$MANUAL_MODE' --environment-receipts --verify-feature-coverage --coverage-partition main --junitxml outputs/default-ci/main.xml"
+            --run ".venv/bin/python -m pytest examples tests/st $model_filter -m 'not sdma and not sdma_fault' --platform a2a3 --exclude-level 4 --device \$TASK_DEVICE -v --require-pto-isa --pto-session-timeout 1200 --manual '$MANUAL_MODE' --environment-receipts --verify-feature-coverage --coverage-partition main --junitxml outputs/default-ci/main.xml"
 
       - name: Run SDMA tests (a2a3)
         if: inputs.manual_mode != 'only'

@@ -15,6 +15,10 @@ on:
       runs_on:
         required: true
         type: string
+      full_accuracy:
+        description: Run the Daily DeepSeek accuracy comparison on a shared full fixture.
+        type: boolean
+        default: false
 
 jobs:
   run:
@@ -42,7 +46,15 @@ jobs:
           system-site-packages: "true"
           source-cann: "true"
 
+      - name: Create Daily model workspace
+        if: inputs.full_accuracy
+        run: |
+          workdir=$(mktemp -d "$RUNNER_TEMP/deepseek-XXXXXXXX")
+          echo "MODEL_WORKDIR=$workdir" >> "$GITHUB_ENV"
+
       - name: Compile DeepSeek kernels (a2a3)
+        env:
+          FULL_ACCURACY: ${{ inputs.full_accuracy }}
         run: |
           source /usr/local/Ascend/cann/set_env.sh
           # discover_runtimes is the one definition of what a runtime is — a
@@ -55,11 +67,16 @@ jobs:
               "from simpler_setup.platform_info import discover_runtimes; print(' '.join(discover_runtimes('a2a3')))")
           test -n "$runtimes"
           for runtime in $runtimes; do
+            args=()
+            if [[ "$FULL_ACCURACY" == true ]]; then
+              args+=(--compiled-chip "$MODEL_WORKDIR/$runtime.bin")
+            fi
             .venv/bin/python "examples/a2a3/$runtime/deepseek_v4_flash_decode/main.py" \
-              --platform a2a3 --compile-only --compile-workers 64
+              --platform a2a3 --compile-only --compile-workers 64 "${args[@]}"
           done
 
       - name: Compile Qwen standalone kernels (a2a3)
+        if: ${{ !inputs.full_accuracy }}
         env:
           TORCH_DEVICE_BACKEND_AUTOLOAD: "0"
         run: |
@@ -78,6 +95,7 @@ jobs:
       # Qwen fixture generation, CPU golden computation and comparison are
       # inside the allocation; the drivers also check the precompiled cache.
       - name: Run Qwen and DeepSeek pytest tests (a2a3)
+        if: ${{ !inputs.full_accuracy }}
         env:
           TORCH_DEVICE_BACKEND_AUTOLOAD: "0"
         run: |
@@ -91,3 +109,37 @@ jobs:
           task-submit --env OMP_NUM_THREADS=16 --env MKL_NUM_THREADS=16 \
             --timeout 1800 --max-time 1800 --device auto --device-num 4 \
             --run ".venv/bin/python -m pytest ${MODEL_TESTS[*]} -m 'not sdma' --platform a2a3 --exclude-level 4 --manual only --device \$TASK_DEVICE -v --require-pto-isa --pto-session-timeout 1200"
+
+      - name: Prepare DeepSeek accuracy fixture
+        if: inputs.full_accuracy
+        env:
+          OMP_NUM_THREADS: "16"
+          MKL_NUM_THREADS: "16"
+          TORCH_DEVICE_BACKEND_AUTOLOAD: "0"
+        run: |
+          .venv/bin/python examples/a2a3/tensormap_and_ringbuffer/deepseek_v4_flash_decode/accuracy.py prepare "$MODEL_WORKDIR"
+
+      - name: Run DeepSeek with full inputs (a2a3)
+        if: inputs.full_accuracy
+        run: |
+          source /usr/local/Ascend/cann/set_env.sh
+          task-submit --device auto --device-num 2 --timeout 1800 --max-time 1800 \
+            --env MODEL_WORKDIR="$MODEL_WORKDIR" --env TORCH_DEVICE_BACKEND_AUTOLOAD=0 \
+            --env OMP_NUM_THREADS=16 --env MKL_NUM_THREADS=16 \
+            --run 'bash examples/a2a3/tensormap_and_ringbuffer/deepseek_v4_flash_decode/run_accuracy.sh "$MODEL_WORKDIR" "$TASK_DEVICE"'
+
+      - name: Compare DeepSeek outputs
+        if: inputs.full_accuracy
+        env:
+          OMP_NUM_THREADS: "16"
+          MKL_NUM_THREADS: "16"
+          TORCH_DEVICE_BACKEND_AUTOLOAD: "0"
+        run: |
+          .venv/bin/python examples/a2a3/tensormap_and_ringbuffer/deepseek_v4_flash_decode/accuracy.py compare "$MODEL_WORKDIR"
+
+      - name: Remove Daily model workspace
+        if: always() && inputs.full_accuracy
+        run: |
+          if [[ -n "${MODEL_WORKDIR:-}" ]]; then
+            rm -rf -- "$MODEL_WORKDIR"
+          fi

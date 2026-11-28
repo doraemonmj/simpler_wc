@@ -85,9 +85,10 @@ Everything else — submit order, dependencies, scope nesting — is
 byte-identical to the TMR source inside the Graph body. The graph keeps the
 size and shape of the real one.
 
-Like the TMR case this one has no golden: no full-network torch reference exists
-upstream either, and component-level goldens live with the standalone kernels in
-pypto-lib.
+Daily compares the final outputs with the TMR run over the same populated
+fixture and verifies the LM head and greedy tokens on CPU. The
+[TMR validation description](../../tensormap_and_ringbuffer/deepseek_v4_flash_decode/README.md#validation-semantics)
+gives the coverage of those checks.
 
 ## Status: the host records the Definitions and the device replays them
 
@@ -95,8 +96,6 @@ With the Graph form the host records the eight Definitions and boots with **129
 submissions from the submitting thread**, two orders of magnitude below
 submitting every task individually — this is measured, on both ranks. The device
 replays all of them and both ranks reach `outcome=0`.
-
-Having no golden still means this establishes completion, not numbers.
 
 Getting the replay running took three fixes. Each is a way a Graph can differ
 from the same body submitted task by task, so they are worth keeping written
@@ -180,10 +179,8 @@ pytest examples/a2a3/host_build_graph/deepseek_v4_flash_decode \
 ```
 
 The case is manual: Per-PR CI runs it in the dedicated `st-model-onboard-a2a3`
-job, in parallel with the main sweep rather than at its tail. It has no golden
-because no full-network torch reference exists upstream, which is why every
-invocation here carries `--skip-golden`: without it the driver first streams the
-harvest's 42.6 GiB-per-rank fixture into the same child buffers. Every flag of the
+job, in parallel with the main sweep. The smoke invocation uses `--skip-golden`.
+Daily streams the harvest's 42.6 GiB-per-rank fixture into the same child buffers. Every flag of the
 shared driver (`--rounds`, `--compile-only`, the diagnostic switches) works here
 too; see the
 [TMR README](../../tensormap_and_ringbuffer/deepseek_v4_flash_decode/README.md#running).

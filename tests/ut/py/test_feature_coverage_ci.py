@@ -399,6 +399,7 @@ def test_default_workflow_commands_preserve_partition_and_receipt_path(
             **os.environ,
             "PATH": f"{binary}:{os.environ['PATH']}",
             "MANUAL_MODE": manual,
+            "SEPARATE_DEEPSEEK_JOB": str(manual == "include").lower(),
             "DEVICE_NUM": "2",
             "SESSION_TIMEOUT_S": "1200",
             "COMMAND_LOG": str(log),
@@ -414,6 +415,8 @@ def test_default_workflow_commands_preserve_partition_and_receipt_path(
     assert args[args.index("--coverage-partition") + 1] == coverage_partition
     if partition:
         assert args[args.index("-m", 2) + 1] == partition
+    deepseek_filter = "--ignore-glob=*/a2a3/*/deepseek_v4_flash_decode"
+    assert (deepseek_filter in args) == (platform == "a2a3" and filename == "main" and manual == "include")
     if filename == "main":
         assert args[args.index("--manual") + 1] == manual
         assert args[args.index("--exclude-level") + 1] == "4"

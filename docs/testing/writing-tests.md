@@ -223,8 +223,8 @@ that mode in the DFX steps. The A2/A3 `network1` cases run in the same Daily
 workflow through their existing two-machine job. Qwen golden checks and
 DeepSeek smokes for both A2/A3 runtimes run Per-PR in their own parallel job
 (`st-model-onboard-a2a3`, `--manual only` over the four model directories).
-Their manual markers exclude them from the main Per-PR sweep; Daily retains
-them in its full onboard sweep without a separate model job.
+Their manual markers exclude them from the main Per-PR sweep. In Daily, Qwen
+runs in the full onboard sweep and DeepSeek runs in the [dedicated accuracy job](../ci.md#daily-full-scene-test-sweep).
 
 To move only selected platforms, pass the platform list to the same marker:
 use `@pytest.mark.manual(["a2a3sim", "a5sim"])` (or the equivalent

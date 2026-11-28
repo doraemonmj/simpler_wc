@@ -22,13 +22,9 @@ Regime (fixed at harvest time): batch 4 x 2 token rows per rank (T=8),
 start_pos 8192, paged KV in 128-token blocks, W8A8 INT8 experts, 64 routed
 experts global / 32 per rank at EP2, top-6 + 1 shared.
 
-This is a completion/smoke case: upstream pypto-lib runs the same fixture with
-``golden_fn=None`` (component-level golden checks live with the standalone
-kernels there), and a full-network torch reference does not exist in either
-repo. The case validates that the harvested distributed program — 368 incore
-kernels plus a 7.8k-line chip orchestration per rank — compiles, dispatches
-across both dies, drives the comm-window protocol to completion, and terminates
-cleanly.
+The per-PR smoke test dispatches the distributed program on both dies. Daily
+uses the complete fixture and reads back hidden states, logits, and sampled
+token IDs for comparison across runtimes and against the CPU LM head.
 
 **The parameters live in child memory.** Each of the 78 per-rank parameters is
 one ``Worker.alloc_child_tensor`` buffer on its own rank, allocated once before
@@ -38,10 +34,8 @@ buffers is the one knob: by default the harvest's fixture is streamed in one
 parameter at a time (42.6 GiB per rank, from
 ``simpler_setup.goldens.deepseek_v4_flash_decode.param_tensors``), while
 ``--skip-golden`` uploads nothing and leaves them uninitialized — which is what
-makes the case cheap enough to measure and to run repeatedly. There is no golden
-either way, so the pytest wrapper beside this file passes ``skip_golden=True``:
-this case has no host-computable expected output, exactly as its former
-``CASES[*]["skip_golden"]`` said.
+the pytest wrapper requests for smoke tests. Daily reads pre-generated parameters
+from ``--fixture-dir`` and saves the final outputs to ``--output-file``.
 
 ``num_tokens_per_owner`` has host backing and is uploaded for device consumers.
 ``host_build_graph`` additionally passes a HOST/NONE view as a separate argument
@@ -60,7 +54,10 @@ See README.md for provenance pins and the regeneration recipe.
 from __future__ import annotations
 
 import argparse
+import ctypes
+import math
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import torch
@@ -68,6 +65,7 @@ from simpler.buffer import Buffer
 from simpler.task_interface import ArgDirection as D
 from simpler.task_interface import (
     CallConfig,
+    ChipCallable,
     CommBufferSpec,
     DataType,
     TaskArgs,
@@ -696,7 +694,16 @@ def _allocate_whole(worker: Worker, n_ranks: int) -> dict[str, Buffer]:
     return buffers
 
 
-def _upload_fixture(worker: Worker, params: dict[str, Buffer], seed: int) -> None:
+def _prepared_tensors(fixture_dir: Path, params: dict[str, Buffer]):
+    for name in params:
+        spec = PARAM_SPEC_BY_NAME[name.rsplit("_r", 1)[0]]
+        tensor = torch.load(fixture_dir / f"{name}.pt", weights_only=True, mmap=True, map_location="cpu")
+        if tuple(tensor.shape) != spec.shape or tensor.dtype != getattr(torch, spec.dtype.lower()):
+            raise ValueError(f"{name}: expected {spec.shape}/{spec.dtype}, got {tuple(tensor.shape)}/{tensor.dtype}")
+        yield name, tensor
+
+
+def _upload_fixture(worker: Worker, params: dict[str, Buffer], tensors) -> None:
     """Stage the harvest's data into the child buffers, one parameter at a time.
 
     Each parameter is copied into its own born-shared staging buffer, pushed H2D,
@@ -704,7 +711,7 @@ def _upload_fixture(worker: Worker, params: dict[str, Buffer], seed: int) -> Non
     rather than the 42.6 GiB per-rank total. ``release_buffer`` (not ``close``)
     also drops the chip child's cached mapping of the staging segment.
     """
-    for name, tensor in param_tensors(seed):
+    for name, tensor in tensors:
         target = params.get(name)
         if target is None:
             # num_tokens_per_owner: host-backed and already carrying the same value.
@@ -720,6 +727,28 @@ def _upload_fixture(worker: Worker, params: dict[str, Buffer], seed: int) -> Non
             worker.copy_to(target, staging)
         finally:
             worker.release_buffer(staging)
+
+
+def _save_outputs(worker: Worker, params: dict[str, Buffer], path: Path) -> None:
+    outputs = {}
+    for field in ("hidden_out", "logits", "sampled_ids"):
+        spec = PARAM_SPEC_BY_NAME[field]
+        dtype = getattr(torch, spec.dtype.lower())
+        for rank in range(N_RANKS):
+            name = f"{field}_r{rank}"
+            source = params[name]
+            staging = worker.create_buffer(source.nbytes)
+            try:
+                worker.copy_from(staging, source)
+                assert staging.shm is not None
+                outputs[name] = (
+                    torch.frombuffer(staging.shm.buf, dtype=dtype, count=math.prod(spec.shape))
+                    .reshape(spec.shape)
+                    .clone()
+                )
+            finally:
+                worker.release_buffer(staging)
+    torch.save(outputs, path)
 
 
 def _build_config(
@@ -795,6 +824,14 @@ def _submit(orch, chip_handle, params, whole, config, n_ranks: int, keepalive: l
             orch.submit_next_level(chip_handle, args, config, worker=rank)
 
 
+def _compile_chip(spec, platform, runtime, compile_workers):
+    # A literal module key makes standalone and pytest invocations share the cached callable.
+    cache_key = l3_compile_cache_key("examples.deepseek_v4_flash_decode", CASE_LABEL, spec["name"], platform, runtime)
+    print(f"[dsv4] compiling {len(_KERNELS)} incores + orchestration for {platform}/{runtime}...", flush=True)
+    with compile_worker_budget(compile_workers) if compile_workers else nullcontext():
+        return compile_chip_callable_spec(spec, platform, runtime, cache_key)
+
+
 def run(  # noqa: PLR0913 -- one knob per CLI flag
     device_ids,
     platform: str,
@@ -810,6 +847,9 @@ def run(  # noqa: PLR0913 -- one knob per CLI flag
     enable_scope_stats: bool = False,
     compile_only: bool = False,
     compile_workers: int | None = None,
+    compiled_chip: Path | None = None,
+    fixture_dir: Path | None = None,
+    output_file: Path | None = None,
 ) -> int:
     """Compile, then run ``rounds`` decode steps across ``device_ids``. 0 on success."""
     device_ids = [int(d) for d in device_ids]
@@ -817,17 +857,16 @@ def run(  # noqa: PLR0913 -- one knob per CLI flag
         raise ValueError(f"deepseek_v4_flash_decode needs {N_RANKS} devices (EP world size), got {device_ids}")
     device_ids = device_ids[:N_RANKS]
 
+    if fixture_dir is not None and skip_golden:
+        raise ValueError("--fixture-dir requires fixture upload; remove --skip-golden")
     spec = _chip_spec(runtime, orchestration_source)
-    # A literal module key, not __name__: running this file as a script and
-    # importing it from the pytest wrapper must hit the same cache entry.
-    cache_key = l3_compile_cache_key("examples.deepseek_v4_flash_decode", CASE_LABEL, spec["name"], platform, runtime)
-    print(f"[dsv4] compiling {len(_KERNELS)} incores + orchestration for {platform}/{runtime}...", flush=True)
-    if compile_workers:
-        with compile_worker_budget(compile_workers):
-            chip = compile_chip_callable_spec(spec, platform, runtime, cache_key)
+    if compiled_chip is not None and not compile_only:
+        chip = ChipCallable.from_bytes(compiled_chip.read_bytes())
     else:
-        chip = compile_chip_callable_spec(spec, platform, runtime, cache_key)
+        chip = _compile_chip(spec, platform, runtime, compile_workers)
     if compile_only:
+        if compiled_chip is not None:
+            compiled_chip.write_bytes(ctypes.string_at(chip.buffer_ptr(), chip.buffer_size()))
         print("[dsv4] compile-only: done", flush=True)
         return 0
 
@@ -863,7 +902,8 @@ def run(  # noqa: PLR0913 -- one knob per CLI flag
         whole = _allocate_whole(worker, N_RANKS)
         if not skip_golden:
             print("[dsv4] uploading the host fixture into child memory...", flush=True)
-            _upload_fixture(worker, params, seed)
+            tensors = _prepared_tensors(fixture_dir, params) if fixture_dir is not None else param_tensors(seed)
+            _upload_fixture(worker, params, tensors)
         config = _build_config(
             runtime,
             dump_args=diagnostics.dump_args,
@@ -881,6 +921,8 @@ def run(  # noqa: PLR0913 -- one knob per CLI flag
                 _submit(orch, chip_handle, params, whole, config, N_RANKS, _keep, runtime)
 
             worker.run(task_orch)
+        if output_file is not None:
+            _save_outputs(worker, params, output_file)
     finally:
         worker.close()
         if output_prefix:
@@ -905,9 +947,18 @@ def parse_args(argv=None) -> argparse.Namespace:
         action="store_true",
         help="Skip the golden path: leave child memory uninitialized and upload nothing. "
         "Without it the harvest's 42.6 GiB-per-rank fixture is streamed into the same "
-        "buffers; there is no golden to compare against either way",
+        "buffers.",
     )
-    parser.add_argument("--seed", type=int, default=1234, help="fixture seed, used unless --skip-golden")
+    parser.add_argument("--seed", type=int, default=1234, help="seed for generating the host fixture")
+    parser.add_argument("--fixture-dir", type=Path, help="read prepared parameter tensors from this directory")
+    parser.add_argument(
+        "--output-file", type=Path, help="save both ranks' final hidden states, logits, and sampled IDs"
+    )
+    parser.add_argument(
+        "--compiled-chip",
+        type=Path,
+        help="write the chip callable here with --compile-only, or load it here for this runtime's device run",
+    )
     # The diagnostic flags mirror the scene-test CLI name for name, including the
     # optional-value forms: `--dump-args` alone is level 1, `--enable-pmu` alone is
     # PIPE_UTILIZATION(2).
@@ -952,6 +1003,9 @@ def main(argv=None, **overrides) -> int:
         enable_scope_stats=cli.enable_scope_stats,
         compile_only=cli.compile_only,
         compile_workers=cli.compile_workers,
+        compiled_chip=cli.compiled_chip,
+        fixture_dir=cli.fixture_dir,
+        output_file=cli.output_file,
         **overrides,
     )
 

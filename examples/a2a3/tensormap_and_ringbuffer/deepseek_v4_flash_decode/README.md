@@ -41,12 +41,9 @@ memcpy. The two modes:
 | device buffers | allocated, then loaded from the fixture | allocated, **left uninitialized** |
 | data | `simpler_setup/goldens/deepseek_v4_flash_decode.py::param_tensors`, one parameter at a time | whatever HBM held |
 
-Neither mode compares anything — see *Validation semantics* below. The flag
-follows the framework's: `store_true`, so a bare run uploads the data and
-`--skip-golden` is what opts out. This case has no host-computable expected
-output, so the pytest wrapper passes `skip_golden=True` — the standalone
-equivalent of the `CASES[*]["skip_golden"]` it used to declare — and that is the
-mode CI runs.
+The standalone driver uploads the fixture by default. The Per-PR pytest
+wrapper passes `skip_golden=True`. Daily supplies a prepared fixture and
+reads back outputs for the checks below.
 
 `num_tokens_per_owner` is the one parameter that stays host-backed. Under
 `host_build_graph` the orchestrator runs on the host and reads it with
@@ -69,18 +66,16 @@ against 42.6 GiB does not change what the flag is for.
 
 ## Validation semantics
 
-The case is a completion/smoke test with no golden. Upstream pypto-lib
-drives the same fixture with `golden_fn=None` — a full-network torch reference
-does not exist there either; numeric coverage lives with the standalone kernel
-harnesses in pypto-lib (`models/deepseek_v4_flash_mtp/*.py`), and real-weight
-end-to-end accuracy lives in pypto-serving. What this case pins down in simpler
-CI terms: the harvested distributed program compiles, both ranks' graphs
-dispatch, the cross-die window protocol (TPUT/TNOTIFY arrivals, LM-head
-all-gather) drains, and the run terminates cleanly.
+Per-PR runs the manual DeepSeek smoke in `st-model-onboard-a2a3`. It checks
+that the program compiles, runs the two-rank communication protocol and finishes.
 
-The case is manual: Per-PR CI runs it in the dedicated `st-model-onboard-a2a3`
-job instead of the main sweep; compiling its 368 incore kernels plus the 7.8k-line
-chip orchestration takes several minutes.
+Daily generates seed 1234 inputs once and replays them through both runtimes.
+After readback it checks every rank's final hidden states, logits and sampled
+IDs for exact agreement across runtimes. The CPU also projects the returned
+hidden states through the original TP weight shards in FP32 and checks every
+logit and greedy token. Cross-runtime agreement covers the preceding layers.
+Upstream pypto-lib runs this full-network case with `golden_fn=None` and
+maintains separate component references. See the [Daily CI job](../../../../docs/ci.md#daily-full-scene-test-sweep).
 
 The six buffer initializations formerly expressed as orchestration-side
 `set_initial_value(0)` calls now run on device. Each of the five
